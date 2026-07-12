@@ -2,6 +2,9 @@
 # The upstream AppImage is a prebuilt opaque ELF bundle without a build ID.
 %global _build_id_links none
 %global debug_package %{nil}
+%global __brp_strip %{nil}
+%global __brp_strip_comment_note %{nil}
+%global __brp_strip_lto %{nil}
 
 Name:           t3code-nightly
 Version:        %(echo %{upstream_version} | sed 's/-.*//')
