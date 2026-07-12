@@ -26,8 +26,8 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: Install Git for checkout
-        run: dnf --assumeyes install git
+      - name: Install release lookup tools
+        run: dnf --assumeyes install curl git jq
       - uses: actions/checkout@v4
         with:
           ref: main
