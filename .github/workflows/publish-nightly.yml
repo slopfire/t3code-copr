@@ -84,7 +84,8 @@ jobs:
             git init
             git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
             git fetch --depth=1 origin main
-            git checkout -B main FETCH_HEAD
+            git reset --hard FETCH_HEAD
+            git branch -M main
           fi
           printf '%s\n' "$TAG" > packaging/last-built-tag
           git config user.name 'github-actions[bot]'
