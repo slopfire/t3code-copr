@@ -1,0 +1,37 @@
+%global upstream_version @UPSTREAM_VERSION@
+
+Name:           t3code-nightly
+Version:        %(echo %{upstream_version} | sed 's/-.*//')
+Release:        0.nightly.%(echo %{upstream_version} | sed 's/.*-nightly\.//')%{?dist}
+Summary:        Minimal GUI for coding agents (nightly build)
+
+License:        MIT
+URL:            https://github.com/pingdotgg/t3code
+Source0:        T3-Code-%{upstream_version}-x86_64.AppImage
+Source1:        t3code
+Source2:        t3code.desktop
+Source3:        LICENSE
+ExclusiveArch:  x86_64
+
+%description
+T3 Code is a minimal GUI for coding agents. This unofficial nightly package
+repackages the upstream x86_64 AppImage.
+
+%prep
+%autosetup -c -T
+
+%install
+install -Dpm0755 %{SOURCE0} %{buildroot}%{_libexecdir}/t3code/t3code.AppImage
+install -Dpm0755 %{SOURCE1} %{buildroot}%{_bindir}/t3code
+install -Dpm0644 %{SOURCE2} %{buildroot}%{_datadir}/applications/t3code.desktop
+install -Dpm0644 %{SOURCE3} %{buildroot}%{_licensedir}/%{name}/LICENSE
+
+%files
+%license %{_licensedir}/%{name}/LICENSE
+%{_bindir}/t3code
+%{_libexecdir}/t3code/t3code.AppImage
+%{_datadir}/applications/t3code.desktop
+
+%changelog
+* Sun Jul 12 2026 T3 Code COPR Maintainers <copr@example.invalid> - %{version}-%{release}
+- Package upstream nightly %{upstream_version}

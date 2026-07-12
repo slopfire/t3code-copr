@@ -1,0 +1,29 @@
+name: RPM packaging CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install Git for checkout
+        run: dnf --assumeyes install git
+      - uses: actions/checkout@v4
+      - name: Install RPM tooling
+        run: dnf --assumeyes install rpm-build rpmdevtools
+      - name: Render and validate the RPM spec
+        run: |
+          ./scripts/render-spec.sh v0.0.29-nightly.20260712.791 /tmp/t3code-nightly.spec
+          rpmspec --parse /tmp/t3code-nightly.spec >/dev/null
+      - name: Check shell scripts
+        run: bash -n scripts/*.sh packaging/t3code

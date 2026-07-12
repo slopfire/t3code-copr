@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec /usr/libexec/t3code/t3code.AppImage --appimage-extract-and-run "$@"
