@@ -79,6 +79,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # actions/checkout marks the workspace safe for the host user, but
+          # run steps execute as a different user inside the job container.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           # Container checkouts can be source archives without a .git directory.
           if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
             git init
@@ -91,5 +94,9 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add packaging/last-built-tag
+          if git diff --cached --quiet; then
+            echo "Nightly $TAG is already recorded"
+            exit 0
+          fi
           git commit -m "chore: record T3 Code nightly $TAG"
           git push
