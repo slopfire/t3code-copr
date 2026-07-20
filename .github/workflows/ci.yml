@@ -18,7 +18,7 @@ jobs:
     steps:
       - name: Install Git for checkout
         run: dnf --assumeyes install git
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install RPM tooling
         run: dnf --assumeyes install rpm-build rpmdevtools
       - name: Render and validate the RPM spec

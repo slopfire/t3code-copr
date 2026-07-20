@@ -19,5 +19,11 @@ asset="T3-Code-${version}-x86_64.AppImage"
 url="https://github.com/pingdotgg/t3code/releases/download/${tag}/${asset}"
 
 mkdir -p "$sources_dir"
-curl --fail --location --retry 3 --output "$sources_dir/$asset" "$url"
+auth_args=()
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  auth_args=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+fi
+curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors \
+  "${auth_args[@]}" \
+  --output "$sources_dir/$asset" "$url"
 chmod 0755 "$sources_dir/$asset"

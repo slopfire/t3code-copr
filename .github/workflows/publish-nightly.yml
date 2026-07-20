@@ -28,7 +28,7 @@ jobs:
     steps:
       - name: Install release lookup tools
         run: dnf --assumeyes install curl git jq
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: main
           fetch-depth: 0
@@ -36,23 +36,39 @@ jobs:
         id: release
         env:
           FORCE: ${{ inputs.force || 'false' }}
+          # Authenticated requests avoid shared-runner unauth 403 rate limits.
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="$(curl --fail --silent --show-error --location \
-            'https://api.github.com/repos/pingdotgg/t3code/releases?per_page=30' \
-            | jq -r '[.[] | select(.prerelease and (.draft | not))][0].tag_name')"
-          test -n "$tag" && test "$tag" != "null"
+          response="$(curl --fail --silent --show-error --location \
+            --retry 5 --retry-delay 2 --retry-all-errors \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            'https://api.github.com/repos/pingdotgg/t3code/releases?per_page=30')"
+          tag="$(jq -r '[.[] | select(.prerelease and (.draft | not))][0].tag_name' <<<"$response")"
+          if [[ -z "$tag" || "$tag" == "null" ]]; then
+            echo "Failed to resolve a non-draft prerelease tag from pingdotgg/t3code" >&2
+            jq '.[0:5] | map({tag_name, prerelease, draft, published_at})' <<<"$response" >&2 || true
+            exit 1
+          fi
+          echo "Resolved upstream nightly: $tag"
           printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
-          if [[ "$FORCE" == "true" || "$tag" != "$(tr -d '\n' < packaging/last-built-tag)" ]]; then
-            echo 'should_build=true' >> "$GITHUB_OUTPUT"
+          last="$(tr -d '\n' < packaging/last-built-tag)"
+          if [[ "$FORCE" == "true" || "$tag" != "$last" ]]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "Will build (force=${FORCE} last=${last})"
           else
-            echo 'should_build=false' >> "$GITHUB_OUTPUT"
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping; already recorded $tag"
           fi
       - name: Install RPM and COPR tooling
         if: steps.release.outputs.should_build == 'true'
         run: dnf --assumeyes install rpm-build rpmdevtools copr-cli
       - name: Build source RPM
         if: steps.release.outputs.should_build == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: ./scripts/build-srpm.sh "${{ steps.release.outputs.tag }}"
       - name: Configure COPR credentials
         if: steps.release.outputs.should_build == 'true'
