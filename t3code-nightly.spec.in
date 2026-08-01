@@ -32,11 +32,26 @@ install -Dpm0755 %{SOURCE1} %{buildroot}%{_bindir}/t3code
 install -Dpm0644 %{SOURCE2} %{buildroot}%{_datadir}/applications/t3code.desktop
 install -Dpm0644 %{SOURCE3} %{buildroot}%{_licensedir}/%{name}/LICENSE
 
+# Install application icons from the AppImage (FUSE-free extract).
+extractdir="%{_builddir}/%{name}-icons"
+mkdir -p "$extractdir"
+(
+  cd "$extractdir"
+  %{buildroot}%{_libexecdir}/t3code/t3code.AppImage --appimage-extract \
+    'usr/share/icons/hicolor/*/apps/t3code.png'
+)
+for icon in "$extractdir"/squashfs-root/usr/share/icons/hicolor/*/apps/t3code.png; do
+  size="$(basename "$(dirname "$(dirname "$icon")")")"
+  install -Dpm0644 "$icon" \
+    "%{buildroot}%{_datadir}/icons/hicolor/${size}/apps/t3code.png"
+done
+
 %files
 %license %{_licensedir}/%{name}/LICENSE
 %{_bindir}/t3code
 %{_libexecdir}/t3code/t3code.AppImage
 %{_datadir}/applications/t3code.desktop
+%{_datadir}/icons/hicolor/*/apps/t3code.png
 
 %changelog
 * Sun Jul 12 2026 T3 Code COPR Maintainers <copr@example.invalid> - %{version}-%{release}
