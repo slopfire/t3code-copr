@@ -23,6 +23,11 @@ Use **Run workflow** with `force` when a COPR rebuild of the same upstream tag
 is needed. The normal CI workflow validates the RPM spec on pushes and pull
 requests but never accesses COPR credentials.
 
+Only upstream `-nightly.` prereleases are packaged. Upstream also publishes
+`-preview.` releases, but those are maintainer test builds (marked "do not
+install"), so they are intentionally ignored. Tag selection lives in
+`scripts/resolve-latest-nightly.sh`.
+
 ## Local build
 
 On Fedora:
