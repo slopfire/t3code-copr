@@ -1,7 +1,18 @@
 # T3 Code Nightly COPR
 
-An RPM package for the x86_64 T3 Code desktop nightly.  It repackages the
-official upstream AppImage; it does not build T3 Code from source.
+RPM packages for the x86_64 T3 Code desktop nightly:
+
+- **`t3code-nightly`** repackages the official upstream AppImage. It does not
+  build T3 Code from source.
+- **`t3code-cmd-nightly`** is that same nightly with
+  [pingdotgg/t3code#10861](https://github.com/pingdotgg/t3code/pull/10861)
+  (the Command Code provider driver) layered on top. Upstream publishes no
+  AppImage containing an open pull request, so this one is compiled from source
+  in GitHub Actions and packaged the same way afterwards.
+
+`t3code-cmd-nightly` installs the same files as `t3code-nightly` and carries
+`Obsoletes: t3code-nightly` plus a higher release, so it replaces the plain
+nightly instead of conflicting with it.
 
 ## COPR setup
 
@@ -14,14 +25,24 @@ official upstream AppImage; it does not build T3 Code from source.
    - `COPR_PROJECT`: the COPR project identifier, for example
      `your-copr-user/t3code-nightly`.
 
-3. Enable Actions. The `Publish T3 Code nightly to COPR` workflow checks the
-   official prereleases every hour and submits a source RPM only when it sees
-   a new tag. It records the successful submission in
-   `packaging/last-built-tag`.
+3. Enable Actions. Two workflows publish here:
+
+   - `Publish T3 Code nightly to COPR` checks the official prereleases every
+     hour and submits the `t3code-nightly` source RPM only when it sees a new
+     tag. It records the successful submission in `packaging/last-built-tag`.
+   - `Build T3 Code + Command Code nightly` compiles the upstream nightly with
+     PR #10861 on top, archives the AppImage on the `cmd-nightly` prerelease,
+     and submits the `t3code-cmd-nightly` source RPM. It rebuilds only when the
+     nightly tag or the PR head commit changed, recording the pair in
+     `packaging/cmd/last-built-key`.
+
+Both submit into the same COPR project, which ends up holding two packages.
 
 Use **Run workflow** with `force` when a COPR rebuild of the same upstream tag
-is needed. The normal CI workflow validates the RPM spec on pushes and pull
-requests but never accesses COPR credentials.
+is needed. The cmd workflow additionally takes a `pr_ref` input, which defaults
+to `refs/pull/10861/head`; point it at a different pull request ref to package
+another PR instead. The normal CI workflow validates the RPM specs on pushes and
+pull requests but never accesses COPR credentials.
 
 Only upstream `-nightly.` prereleases are packaged. Upstream also publishes
 `-preview.` releases, but those are maintainer test builds (marked "do not
@@ -39,7 +60,28 @@ sudo dnf install rpm-build rpmdevtools curl
 
 The source RPM is written to `rpmbuild/SRPMS/`.
 
+The cmd flavor repackages an AppImage that only CI builds, so it needs one on
+disk:
+
+```sh
+./scripts/build-cmd-srpm.sh v0.0.29-nightly.20260712.791 10861 <pr-sha> \
+  T3-Code-0.0.29-nightly.20260712.791-x86_64.AppImage
+```
+
+## Installing the cmd build over the plain nightly
+
+The two packages own the same files, so install them as a swap rather than
+alongside each other:
+
+```sh
+sudo dnf swap t3code-nightly t3code-cmd-nightly
+```
+
+`t3code-cmd-nightly` also obsoletes `t3code-nightly`, so a plain
+`sudo dnf upgrade` reaches the same result.
+
 ## Notes
 
-This is an unofficial package. T3 Code is distributed under the MIT license;
-the packaged application binary remains the upstream AppImage.
+These are unofficial packages. T3 Code is distributed under the MIT license.
+`t3code-nightly` ships the upstream AppImage unchanged; `t3code-cmd-nightly`
+ships an AppImage built from upstream sources plus PR #10861.

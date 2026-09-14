@@ -25,5 +25,7 @@ jobs:
         run: |
           ./scripts/render-spec.sh v0.0.29-nightly.20260712.791 /tmp/t3code-nightly.spec
           rpmspec --parse /tmp/t3code-nightly.spec >/dev/null
+          ./scripts/render-cmd-spec.sh v0.0.29-nightly.20260712.791 10861 /tmp/t3code-cmd-nightly.spec
+          rpmspec --parse /tmp/t3code-cmd-nightly.spec >/dev/null
       - name: Check shell scripts
         run: bash -n scripts/*.sh packaging/t3code

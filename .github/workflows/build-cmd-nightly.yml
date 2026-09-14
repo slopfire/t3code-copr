@@ -1,0 +1,268 @@
+name: Build T3 Code + Command Code nightly
+
+# Builds the upstream nightly from source with a pull request layered on top,
+# packages the resulting x86_64 AppImage as `t3code-cmd-nightly`, and submits it
+# to the same COPR project as the plain nightly. The plain nightly repackages an
+# official AppImage; this one has to compile, because no upstream artifact
+# contains the pull request.
+
+on:
+  schedule:
+    - cron: "47 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Build even if this nightly tag and PR revision were already recorded
+        required: false
+        default: false
+        type: boolean
+      pr_ref:
+        description: Upstream pull request ref to layer onto the nightly tag
+        required: false
+        default: refs/pull/10861/head
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: t3code-cmd-nightly-copr
+  cancel-in-progress: false
+
+env:
+  T3CODE_REPO: pingdotgg/t3code
+  PR_NUMBER: "10861"
+  # The public identifiers upstream bakes into official builds (see its
+  # .env.example). Not secrets: they only enable T3 Connect against the public
+  # production deployment, and without them the app builds with cloud disabled.
+  T3CODE_CLERK_PUBLISHABLE_KEY: pk_live_Y2xlcmsudDMuY29kZXMk
+  T3CODE_CLERK_JWT_TEMPLATE: t3-relay
+  T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: hzxSgY2cH10sDU2r
+  T3CODE_RELAY_URL: https://relay.t3.codes
+
+jobs:
+  resolve:
+    name: Resolve upstream nightly and PR revision
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.release.outputs.should_build }}
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      pr_sha: ${{ steps.release.outputs.pr_sha }}
+      key: ${{ steps.release.outputs.key }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Resolve versions
+        id: release
+        env:
+          FORCE: ${{ inputs.force || 'false' }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(./scripts/resolve-latest-nightly.sh)"
+          version="${tag#v}"
+          pr_sha="$(gh api "repos/${T3CODE_REPO}/pulls/${PR_NUMBER}" --jq '.head.sha')"
+          test -n "$pr_sha" || { echo "Could not resolve PR ${PR_NUMBER}." >&2; exit 1; }
+          key="${tag}+${pr_sha}"
+          echo "Resolved upstream nightly: $tag"
+          echo "Pull request ${PR_NUMBER} head: $pr_sha"
+
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'pr_sha=%s\n' "$pr_sha" >> "$GITHUB_OUTPUT"
+          printf 'key=%s\n' "$key" >> "$GITHUB_OUTPUT"
+
+          last="$(cat packaging/cmd/last-built-key 2>/dev/null || true)"
+          if [[ "$FORCE" == "true" || "$key" != "$last" ]]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "Will build (force=${FORCE} last=${last:-none})"
+          else
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping; already recorded $key"
+          fi
+
+  build:
+    name: Build patched AppImage
+    needs: resolve
+    if: needs.resolve.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout upstream at the nightly tag
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.T3CODE_REPO }}
+          ref: ${{ needs.resolve.outputs.tag }}
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Layer pull request ${{ env.PR_NUMBER }} on top
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_REF: ${{ inputs.pr_ref || 'refs/pull/10861/head' }}
+        run: |
+          set -euo pipefail
+          git config user.name 't3code-cmd-nightly'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch --no-tags origin "+${PR_REF}:refs/remotes/origin/pr"
+          if ! git merge --no-edit refs/remotes/origin/pr; then
+            echo "::error::Could not merge ${PR_REF} onto ${{ needs.resolve.outputs.tag }}."
+            exit 1
+          fi
+          echo "Built commit: $(git rev-parse HEAD)"
+          echo "Expected PR head: ${{ needs.resolve.outputs.pr_sha }}"
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux build libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libsecret-1-dev pkg-config imagemagick
+
+      - name: Install dependencies
+        run: |
+          vp install \
+            --filter=t3... \
+            --filter=@t3tools/web... \
+            --filter=@t3tools/desktop... \
+            --filter=@t3tools/scripts...
+
+      - name: Align package versions
+        run: node scripts/update-release-package-versions.ts "${{ needs.resolve.outputs.version }}"
+
+      - name: Build desktop pipeline
+        run: vp run build:desktop
+
+      - name: Build Linux AppImage
+        run: |
+          vp run dist:desktop:artifact \
+            --platform linux \
+            --target AppImage \
+            --arch x64 \
+            --build-version "${{ needs.resolve.outputs.version }}" \
+            --skip-build \
+            --verbose
+
+      - name: Collect the AppImage
+        run: |
+          set -euo pipefail
+          appimage="$(find release -maxdepth 1 -name '*.AppImage' -print -quit)"
+          test -n "$appimage" || { echo "No AppImage was produced." >&2; exit 1; }
+          install -Dm0755 "$appimage" \
+            "$RUNNER_TEMP/T3-Code-${{ needs.resolve.outputs.version }}-x86_64.AppImage"
+          ls -l "$RUNNER_TEMP/T3-Code-${{ needs.resolve.outputs.version }}-x86_64.AppImage"
+
+      - name: Upload the AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmd-appimage
+          path: ${{ runner.temp }}/T3-Code-*.AppImage
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish to COPR
+    needs: [resolve, build]
+    if: needs.resolve.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install RPM, release, and COPR tooling
+        run: dnf --assumeyes install curl gh git jq rpm-build rpmdevtools copr-cli
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: cmd-appimage
+          path: appimage
+
+      # Archive the exact bytes the RPM carries before publishing anything that
+      # claims to be built from them.
+      - name: Archive the AppImage on a rolling prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="cmd-nightly"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --prerelease \
+              --title 'T3 Code + Command Code nightly AppImages' \
+              --notes 'Rolling prerelease holding the source-built AppImages that the t3code-cmd-nightly RPM repackages.'
+          fi
+          gh release upload "$tag" "appimage/T3-Code-${VERSION}-x86_64.AppImage" --clobber
+
+      - name: Build source RPM
+        run: |
+          ./scripts/build-cmd-srpm.sh \
+            "${{ needs.resolve.outputs.tag }}" \
+            "${PR_NUMBER}" \
+            "${{ needs.resolve.outputs.pr_sha }}" \
+            appimage/T3-Code-*.AppImage
+
+      - name: Configure COPR credentials
+        env:
+          COPR_CONFIG: ${{ secrets.COPR_CONFIG }}
+        run: |
+          set -euo pipefail
+          test -n "$COPR_CONFIG"
+          install -d -m 0700 ~/.config
+          printf '%s' "$COPR_CONFIG" > ~/.config/copr
+          chmod 0600 ~/.config/copr
+
+      - name: Submit source RPM to COPR
+        env:
+          COPR_PROJECT: ${{ secrets.COPR_PROJECT }}
+        run: |
+          set -euo pipefail
+          test -n "$COPR_PROJECT"
+          copr build "$COPR_PROJECT" rpmbuild/SRPMS/*.src.rpm
+
+      - name: Record successful submission
+        env:
+          KEY: ${{ needs.resolve.outputs.key }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # actions/checkout marks the workspace safe for the host user, but
+          # run steps execute as a different user inside the job container.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # Container checkouts can be source archives without a .git directory.
+          if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            git init
+            git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+            git fetch --depth=1 origin main
+            git reset --hard FETCH_HEAD
+            git branch -M main
+          fi
+          mkdir -p packaging/cmd
+          printf '%s\n' "$KEY" > packaging/cmd/last-built-key
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add packaging/cmd/last-built-key
+          if git diff --cached --quiet; then
+            echo "cmd nightly $KEY is already recorded"
+            exit 0
+          fi
+          git commit -m "chore: record T3 Code cmd nightly $KEY"
+          git push
