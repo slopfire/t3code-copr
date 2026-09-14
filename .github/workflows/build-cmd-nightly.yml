@@ -187,6 +187,11 @@ jobs:
     steps:
       - name: Install RPM, release, and COPR tooling
         run: dnf --assumeyes install curl gh git jq rpm-build rpmdevtools copr-cli
+      # The checkout is owned by the host user while run steps execute as a
+      # different user inside the container, so `gh`'s internal git calls fail
+      # without this.
+      - name: Allow git access to the container-owned workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - uses: actions/checkout@v5
         with:
           ref: main
@@ -205,12 +210,13 @@ jobs:
         run: |
           set -euo pipefail
           tag="cmd-nightly"
-          if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" --prerelease \
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --prerelease \
               --title 'T3 Code + Command Code nightly AppImages' \
               --notes 'Rolling prerelease holding the source-built AppImages that the t3code-cmd-nightly RPM repackages.'
           fi
-          gh release upload "$tag" "appimage/T3-Code-${VERSION}-x86_64.AppImage" --clobber
+          gh release upload "$tag" --repo "$GITHUB_REPOSITORY" \
+            "appimage/T3-Code-${VERSION}-x86_64.AppImage" --clobber
 
       - name: Build source RPM
         run: |
@@ -244,9 +250,6 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # actions/checkout marks the workspace safe for the host user, but
-          # run steps execute as a different user inside the job container.
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           # Container checkouts can be source archives without a .git directory.
           if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
             git init
