@@ -8,7 +8,9 @@ RPM packages for the x86_64 T3 Code desktop nightly:
   [pingdotgg/t3code#10861](https://github.com/pingdotgg/t3code/pull/10861)
   (the Command Code provider driver) layered on top. Upstream publishes no
   AppImage containing an open pull request, so this one is compiled from source
-  in GitHub Actions and packaged the same way afterwards.
+  in GitHub Actions and packaged the same way afterwards. Local fixes from
+  `patches/` are applied after the pull request; see
+  [Local patches](#local-patches).
 
 `t3code-cmd-nightly` installs the same files as `t3code-nightly` and carries
 `Obsoletes: t3code-nightly` plus a higher release, so it replaces the plain
@@ -49,6 +51,21 @@ Only upstream `-nightly.` prereleases are packaged. Upstream also publishes
 install"), so they are intentionally ignored. Tag selection lives in
 `scripts/resolve-latest-nightly.sh`.
 
+## Local patches
+
+`patches/*.patch` are applied on top of the pull request before the AppImage is
+built, and the build key includes a digest of them, so editing a patch triggers
+a rebuild. Each patch must apply cleanly to the pull request head; if upstream
+changes the file it touches, the workflow fails instead of quietly shipping
+something else.
+
+| Patch | Why |
+| --- | --- |
+| `0001-command-code-steer-on-mid-turn-send.patch` | PR #10861 fails a `sendTurn` that arrives while a turn is running (`a turn is already running for this thread`), so a message typed mid-turn is dropped. Every other provider adapter steers instead. The patch queues the prompt on the active run and runs it as the same turn once the running CLI process exits. |
+
+The patch is not upstreamed: once the pull request (or an equivalent change)
+carries the fix, delete the patch file and this section.
+
 ## Local build
 
 On Fedora:
@@ -67,6 +84,10 @@ disk:
 ./scripts/build-cmd-srpm.sh v0.0.29-nightly.20260712.791 10861 <pr-sha> \
   T3-Code-0.0.29-nightly.20260712.791-x86_64.AppImage
 ```
+
+That AppImage has to come from the pull request plus the patches in `patches/`
+applied; CI is the only place that builds it, so the local path is mostly for
+packaging an AppImage you already have.
 
 ## Installing the cmd build over the plain nightly
 

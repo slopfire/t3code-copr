@@ -67,9 +67,13 @@ jobs:
           version="${tag#v}"
           pr_sha="$(gh api "repos/${T3CODE_REPO}/pulls/${PR_NUMBER}" --jq '.head.sha')"
           test -n "$pr_sha" || { echo "Could not resolve PR ${PR_NUMBER}." >&2; exit 1; }
-          key="${tag}+${pr_sha}"
+          # Local patches ride on top of the pull request, so the key has to
+          # move when they change; otherwise a fixed patch never rebuilds.
+          patch_digest="$(cat patches/*.patch 2>/dev/null | sha256sum | cut -c1-12)"
+          key="${tag}+${pr_sha}+p${patch_digest}"
           echo "Resolved upstream nightly: $tag"
           echo "Pull request ${PR_NUMBER} head: $pr_sha"
+          echo "Local patch digest: p${patch_digest}"
 
           printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
@@ -119,6 +123,40 @@ jobs:
           echo "Built commit: $(git rev-parse HEAD)"
           echo "Expected PR head: ${{ needs.resolve.outputs.pr_sha }}"
 
+      # This job checks out upstream, so the patches that live in this repository
+      # are fetched by API rather than checked out into the build tree.
+      - name: Fetch local patches
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/patches"
+          gh api "repos/${GITHUB_REPOSITORY}/contents/patches?ref=${{ github.sha }}" \
+            --jq '.[] | select(.name | endswith(".patch")) | .name' > "$RUNNER_TEMP/patches/list"
+          while IFS= read -r name; do
+            echo "Fetching ${name}"
+            gh api "repos/${GITHUB_REPOSITORY}/contents/patches/${name}?ref=${{ github.sha }}" \
+              -H 'Accept: application/vnd.github.raw' > "$RUNNER_TEMP/patches/${name}"
+          done < "$RUNNER_TEMP/patches/list"
+
+      - name: Apply local patches
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          patches=("$RUNNER_TEMP"/patches/*.patch)
+          if [ ${#patches[@]} -eq 0 ]; then
+            echo "No local patches to apply."
+            exit 0
+          fi
+          for patch in "${patches[@]}"; do
+            echo "Applying $(basename "${patch}")"
+            if ! git apply --verbose "${patch}"; then
+              echo "::error::Could not apply $(basename "${patch}"); the pull request changed the files it touches."
+              exit 1
+            fi
+          done
+          git --no-pager diff --stat
+
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
         with:
@@ -141,6 +179,12 @@ jobs:
             --filter=@t3tools/web... \
             --filter=@t3tools/desktop... \
             --filter=@t3tools/scripts...
+
+      # The patch is the only part of this build upstream CI never sees, so its
+      # focused test runs here before anything is packaged.
+      - name: Test the Command Code adapter
+        working-directory: apps/server
+        run: vp test run src/provider/Layers/CommandCodeAdapter.test.ts
 
       - name: Align package versions
         run: node scripts/update-release-package-versions.ts "${{ needs.resolve.outputs.version }}"

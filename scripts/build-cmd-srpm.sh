@@ -43,6 +43,15 @@ PR head commit:   ${pr_sha}
 AppImage built:   $(date -u '+%Y-%m-%dT%H:%M:%SZ')
 EOF
 
+# The AppImage also carries the local patches from patches/, so the provenance
+# file has to name them; otherwise it claims a pure pull-request build.
+for patch in patches/*.patch; do
+  [[ -e "$patch" ]] || continue
+  printf 'Local patch:      %s (sha256 %s)\n' \
+    "$(basename "$patch")" "$(sha256sum "$patch" | cut -d' ' -f1)" \
+    >> "$topdir/SOURCES/upstream-pr-${pr_number}.txt"
+done
+
 ./scripts/render-cmd-spec.sh "$version" "$pr_number" \
   "$topdir/SPECS/t3code-cmd-nightly.spec"
 
