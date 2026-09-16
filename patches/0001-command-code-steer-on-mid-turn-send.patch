@@ -1,17 +1,25 @@
-Command Code: steer mid-turn sends instead of failing them.
+Command Code: keep mid-turn sends, and keep Stop a clean abort.
 
-Upstream PR #10861 rejects any `sendTurn` that arrives while a turn is
-running with "a turn is already running for this thread". Every other
-provider adapter treats that case as a steer, and T3 clients send mid-turn
-messages on purpose, so the user's message is dropped and the thread records
-a turn-start failure (observed 2026-09-16 on a long-running turn).
+Two defects in the driver added by upstream PR #10861:
 
-Command Code headless mode takes one prompt per `-p` process, so the message
+1. A `sendTurn` that arrives while a turn is running is rejected with "a turn
+   is already running for this thread". Every other provider adapter treats
+   that as a steer, and T3 clients send mid-turn messages on purpose, so the
+   message is dropped and the thread records a turn-start failure (observed
+   2026-09-16 while a long turn was in flight).
+
+2. A child killed by a signal never reports an exit code: the Node spawner
+   fails the wait with a PlatformError, so the adapter reports a provider
+   process failure instead of aborting the turn. Stop hits this, and the
+   interrupt case in CommandCodeAdapter.test.ts fails on it.
+
+Command Code headless mode takes one prompt per `-p` process, so a steer
 cannot reach the live child. The adapter now queues it on the active run and
 runs it as the same turn once that process exits, resuming the same Command
 Code session — no new `turn.started`, one `turn.completed` when the queue is
 empty. The queue check and the release share a single update so a steer can
-never land on a run that will not drain again.
+never land on a run that will not drain again. A missing exit code is folded
+back into the exit-code decision so an interrupt stays an abort.
 
 --- a/apps/server/src/provider/Layers/CommandCodeAdapter.ts
 +++ b/apps/server/src/provider/Layers/CommandCodeAdapter.ts
@@ -36,7 +44,7 @@ never land on a run that will not drain again.
    ProviderAdapterSessionNotFoundError,
    ProviderAdapterValidationError,
    type ProviderAdapterError,
-@@ -235,6 +240,19 @@
+@@ -235,12 +240,26 @@
    readonly cancel: { requested: boolean };
    /** Null between the atomic reservation and the process actually spawning. */
    child: TurnChildHandle | null;
@@ -56,7 +64,15 @@ never land on a run that will not drain again.
  }
  
  /** Structural view of the spawner's child handle, kept wide so the adapter
-@@ -249,6 +267,16 @@
+  * stays independent of the process module's exact stream/sink generics. */
+ interface TurnChildHandle {
+-  readonly exitCode: Effect.Effect<number>;
++  /** Fails when the process was terminated by a signal rather than exiting. */
++  readonly exitCode: Effect.Effect<number, unknown>;
+   readonly kill: (options?: { readonly forceKillAfter?: unknown }) => Effect.Effect<void>;
+   readonly stdout: Stream.Stream<Uint8Array, never>;
+   readonly stderr: Stream.Stream<Uint8Array, never>;
+@@ -249,6 +268,16 @@
  
  type TurnOutcome = "completed" | "interrupted" | "failed";
  
@@ -73,7 +89,7 @@ never land on a run that will not drain again.
  export function makeCommandCodeAdapter(
    config: CommandCodeSettings,
    options: CommandCodeAdapterOptions,
-@@ -391,26 +419,81 @@
+@@ -391,26 +420,85 @@
          : activeRun.child.kill({ forceKillAfter: "2 seconds" }).pipe(Effect.ignore);
  
      /**
@@ -135,10 +151,14 @@ never land on a run that will not drain again.
          const session = map.get(threadId);
 -        if (session === undefined || session.activeRun !== null) {
 -          return [false, map] as const;
-+        const active = session?.activeRun;
-+        if (active === null || active === undefined || active.turnId !== turnId) {
++        if (
++          session === undefined ||
++          session.activeRun === null ||
++          session.activeRun.turnId !== turnId
++        ) {
 +          return [null, map] as const;
 +        }
++        const active = session.activeRun;
 +        const next = active.queuedPrompts[0];
 +        if (next === undefined) {
 +          return [null, new Map(map).set(threadId, { ...session, activeRun: null })] as const;
@@ -164,7 +184,7 @@ never land on a run that will not drain again.
        readonly threadId: ThreadId;
        readonly turnId: TurnId;
        readonly prompt: string;
-@@ -427,13 +510,6 @@
+@@ -427,13 +515,6 @@
          }
          const runCancel = session.activeRun.cancel;
  
@@ -178,7 +198,49 @@ never land on a run that will not drain again.
          const args = commandCodeTurnArgs({
            permissionMode: config.permissionMode,
            model: input.model,
-@@ -777,28 +853,17 @@
+@@ -468,7 +549,7 @@
+             turnId: input.turnId,
+             payload: { reason: "interrupted" },
+           });
+-          return "interrupted" as const;
++          return { outcome: "interrupted", usage: undefined, stopReason: undefined } as const;
+         }
+         // A delayed interrupt may have landed before the child spawned.
+         if (runCancel.requested) {
+@@ -479,7 +560,7 @@
+             turnId: input.turnId,
+             payload: { reason: "interrupted" },
+           });
+-          return "interrupted" as const;
++          return { outcome: "interrupted", usage: undefined, stopReason: undefined } as const;
+         }
+ 
+         // Stream the prompt over stdin; Command Code auto-detects piped input.
+@@ -743,7 +824,22 @@
+ 
+         // Run the parse loops alongside the exit wait; all three finish when
+         // the subprocess closes its pipes.
+-        const [, , exitRaw] = yield* Effect.all([stdoutLoop, stderrLoop, child.exitCode], {
++        //
++        // A child that dies from a signal has no exit code: the Node spawner
++        // fails the wait with a PlatformError instead of reporting one, which
++        // is what an interrupt (or any externally killed process) looks like.
++        // Fold that back into the exit-code decision so Stop stays an abort
++        // instead of surfacing as a provider process failure.
++        const exitWait = child.exitCode.pipe(
++          Effect.catch((error) =>
++            Effect.sync(() => {
++              const next = `${stderrTail}\n${String(error)}`.trim();
++              stderrTail = next.length > 8_000 ? next.slice(next.length - 8_000) : next;
++              return -1;
++            }),
++          ),
++        );
++        const [, , exitRaw] = yield* Effect.all([stdoutLoop, stderrLoop, exitWait], {
+           concurrency: "unbounded",
+         });
+         const exitCode = typeof exitRaw === "number" ? exitRaw : Number(exitRaw);
+@@ -777,28 +873,17 @@
                ...(usage !== undefined ? { tokenUsage: toTurnTokenUsage(usage) } : {}),
              },
            });
@@ -215,7 +277,7 @@ never land on a run that will not drain again.
          }
  
          // Failure path. Prefer a structured message from stderr; exit codes
-@@ -834,7 +899,80 @@
+@@ -834,7 +919,80 @@
            turnId: input.turnId,
            payload: { state: "failed", errorMessage: message },
          });
@@ -297,7 +359,7 @@ never land on a run that will not drain again.
        });
  
      const runTurn = (input: {
-@@ -911,8 +1049,8 @@
+@@ -911,8 +1069,8 @@
        sendTurn: (input: ProviderSendTurnInput) =>
          Effect.gen(function* () {
            const session = yield* getSession(input.threadId);
@@ -308,7 +370,7 @@ never land on a run that will not drain again.
              return yield* new ProviderAdapterValidationError({
                provider: driverKind,
                operation: "sendTurn",
-@@ -920,23 +1058,45 @@
+@@ -920,23 +1078,45 @@
              });
            }
            const model = input.modelSelection?.model ?? session.model;
