@@ -61,7 +61,7 @@ something else.
 
 | Patch | Why |
 | --- | --- |
-| `0001-command-code-steer-on-mid-turn-send.patch` | PR #10861 fails a `sendTurn` that arrives while a turn is running (`a turn is already running for this thread`), so a message typed mid-turn is dropped. Every other provider adapter steers instead. The patch queues the prompt on the active run and runs it as the same turn once the running CLI process exits. |
+| `0001-command-code-steer-on-mid-turn-send.patch` | PR #10861 rejects any `sendTurn` that arrives while a turn is running (`a turn is already running for this thread`), so a message typed mid-turn is dropped; it also reports a signal-killed child (Stop) as a provider process failure. The patch steers the message into the running turn, keeps Stop a clean abort, and names any mid-turn messages a turn ends up never delivering. |
 
 The patch is not upstreamed: once the pull request (or an equivalent change)
 carries the fix, delete the patch file and this section.

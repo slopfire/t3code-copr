@@ -1,25 +1,24 @@
-Command Code: keep mid-turn sends, and keep Stop a clean abort.
+Command Code: keep mid-turn sends, keep Stop a clean abort, and never drop a
+message silently.
 
-Two defects in the driver added by upstream PR #10861:
+Upstream PR #10861 rejects a `sendTurn` that arrives while a turn is running
+("a turn is already running for this thread"). Every other provider adapter
+treats that as a steer, and T3 clients send mid-turn messages on purpose, so
+the message is dropped and the thread records a turn-start failure (observed
+2026-09-16 while a long turn was in flight). Its interrupt path is broken too:
+a child killed by a signal never reports an exit code, the Node spawner fails
+the wait with a PlatformError, and the turn surfaces as a provider process
+failure instead of an abort — which is what Stop hits.
 
-1. A `sendTurn` that arrives while a turn is running is rejected with "a turn
-   is already running for this thread". Every other provider adapter treats
-   that as a steer, and T3 clients send mid-turn messages on purpose, so the
-   message is dropped and the thread records a turn-start failure (observed
-   2026-09-16 while a long turn was in flight).
-
-2. A child killed by a signal never reports an exit code: the Node spawner
-   fails the wait with a PlatformError, so the adapter reports a provider
-   process failure instead of aborting the turn. Stop hits this, and the
-   interrupt case in CommandCodeAdapter.test.ts fails on it.
-
-Command Code headless mode takes one prompt per `-p` process, so a steer
-cannot reach the live child. The adapter now queues it on the active run and
-runs it as the same turn once that process exits, resuming the same Command
-Code session — no new `turn.started`, one `turn.completed` when the queue is
-empty. The queue check and the release share a single update so a steer can
-never land on a run that will not drain again. A missing exit code is folded
-back into the exit-code decision so an interrupt stays an abort.
+Command Code headless mode takes one prompt per `-p` process, so a steer cannot
+reach the live child. The adapter now queues it on the active run and runs it as
+the same turn once that process exits, resuming the same Command Code session —
+no new `turn.started`, one `turn.completed` when the queue is empty. The queue
+check and the release share a single update so a steer can never land on a run
+that will not drain again. A missing exit code is folded back into the exit-code
+decision so an interrupt stays an abort. When a turn ends early (failed or
+stopped) the queue dies with it, so the run names the undelivered messages in
+its error text and abort reason instead of leaving them looking delivered.
 
 --- a/apps/server/src/provider/Layers/CommandCodeAdapter.ts
 +++ b/apps/server/src/provider/Layers/CommandCodeAdapter.ts
@@ -89,7 +88,7 @@ back into the exit-code decision so an interrupt stays an abort.
  export function makeCommandCodeAdapter(
    config: CommandCodeSettings,
    options: CommandCodeAdapterOptions,
-@@ -391,26 +420,85 @@
+@@ -391,26 +420,125 @@
          : activeRun.child.kill({ forceKillAfter: "2 seconds" }).pipe(Effect.ignore);
  
      /**
@@ -101,7 +100,8 @@ back into the exit-code decision so an interrupt stays an abort.
 +     * arriving after it joins as a steer, because every other adapter folds a
 +     * mid-turn message into the running turn and the CLI takes one prompt per
 +     * process. Turns therefore never overlap, and a steer is never dropped.
-+     */
+      */
+-    const reserveTurn = (threadId: ThreadId, turnId: TurnId): Effect.Effect<boolean> =>
 +    const admitTurn = (input: {
 +      readonly threadId: ThreadId;
 +      readonly turnId: TurnId;
@@ -141,8 +141,7 @@ back into the exit-code decision so an interrupt stays an abort.
 +     * when nothing is waiting. Both outcomes share one update so a steer landing
 +     * as the run ends either joins this run or starts a fresh turn — it can
 +     * never be appended to a run that will not drain again.
-      */
--    const reserveTurn = (threadId: ThreadId, turnId: TurnId): Effect.Effect<boolean> =>
++     */
 +    const takeNextPromptOrRelease = (
 +      threadId: ThreadId,
 +      turnId: TurnId,
@@ -175,6 +174,46 @@ back into the exit-code decision so an interrupt stays an abort.
        });
  
 -    const runTurnRaw = (input: {
++    /** Steered prompts still waiting on the run that owns this turn. */
++    const pendingSteerCount = (threadId: ThreadId, turnId: TurnId): Effect.Effect<number> =>
++      Ref.get(sessions).pipe(
++        Effect.map((map) => {
++          const active = map.get(threadId)?.activeRun;
++          return active !== null && active !== undefined && active.turnId === turnId
++            ? active.queuedPrompts.length
++            : 0;
++        }),
++      );
++
++    /**
++     * A turn that ends early takes its queue with it. Name what was lost: the
++     * undelivered messages stay in the thread looking delivered, and a silent
++     * drop is how a user ends up waiting on an answer that never comes.
++     */
++    const undeliveredSteerNote = (threadId: ThreadId, turnId: TurnId): Effect.Effect<string> =>
++      pendingSteerCount(threadId, turnId).pipe(
++        Effect.map((pending) =>
++          pending === 0
++            ? ""
++            : `${pending} message${pending === 1 ? "" : "s"} sent while this turn ran ${
++                pending === 1 ? "was" : "were"
++              } not delivered; resend to continue.`,
++        ),
++      );
++
++    /** `turn.aborted` payload whose reason names any steered prompts it drops. */
++    const interruptAbortPayload = (
++      threadId: ThreadId,
++      turnId: TurnId,
++      extra: Record<string, unknown>,
++    ): Effect.Effect<Record<string, unknown>> =>
++      undeliveredSteerNote(threadId, turnId).pipe(
++        Effect.map((note) => ({
++          reason: note.length === 0 ? "interrupted" : `interrupted. ${note}`,
++          ...extra,
++        })),
++      );
++
 +    /**
 +     * Run one prompt through one CLI process and fold its stream into runtime
 +     * events. A run keeps its turn open on success: the turn's owner decides
@@ -184,7 +223,7 @@ back into the exit-code decision so an interrupt stays an abort.
        readonly threadId: ThreadId;
        readonly turnId: TurnId;
        readonly prompt: string;
-@@ -427,13 +515,6 @@
+@@ -427,13 +555,6 @@
          }
          const runCancel = session.activeRun.cancel;
  
@@ -198,25 +237,38 @@ back into the exit-code decision so an interrupt stays an abort.
          const args = commandCodeTurnArgs({
            permissionMode: config.permissionMode,
            model: input.model,
-@@ -468,7 +549,7 @@
+@@ -462,24 +583,26 @@
+           // local child and end the turn as interrupted instead of running it.
+           runCancel.requested = true;
+           yield* child.kill({ forceKillAfter: "2 seconds" }).pipe(Effect.ignore);
++          const payload = yield* interruptAbortPayload(input.threadId, input.turnId, {});
+           yield* offer({
+             type: "turn.aborted",
+             threadId: input.threadId,
              turnId: input.turnId,
-             payload: { reason: "interrupted" },
+-            payload: { reason: "interrupted" },
++            payload,
            });
 -          return "interrupted" as const;
 +          return { outcome: "interrupted", usage: undefined, stopReason: undefined } as const;
          }
          // A delayed interrupt may have landed before the child spawned.
          if (runCancel.requested) {
-@@ -479,7 +560,7 @@
+           yield* child.kill({ forceKillAfter: "2 seconds" }).pipe(Effect.ignore);
++          const payload = yield* interruptAbortPayload(input.threadId, input.turnId, {});
+           yield* offer({
+             type: "turn.aborted",
+             threadId: input.threadId,
              turnId: input.turnId,
-             payload: { reason: "interrupted" },
+-            payload: { reason: "interrupted" },
++            payload,
            });
 -          return "interrupted" as const;
 +          return { outcome: "interrupted", usage: undefined, stopReason: undefined } as const;
          }
  
          // Stream the prompt over stdin; Command Code auto-detects piped input.
-@@ -743,7 +824,22 @@
+@@ -743,7 +866,22 @@
  
          // Run the parse loops alongside the exit wait; all three finish when
          // the subprocess closes its pipes.
@@ -240,9 +292,24 @@ back into the exit-code decision so an interrupt stays an abort.
            concurrency: "unbounded",
          });
          const exitCode = typeof exitRaw === "number" ? exitRaw : Number(exitRaw);
-@@ -777,28 +873,17 @@
-               ...(usage !== undefined ? { tokenUsage: toTurnTokenUsage(usage) } : {}),
-             },
+@@ -768,37 +906,28 @@
+         }
+ 
+         if (wasInterrupted) {
++          const payload = yield* interruptAbortPayload(
++            input.threadId,
++            input.turnId,
++            usage !== undefined ? { tokenUsage: toTurnTokenUsage(usage) } : {},
++          );
+           yield* offer({
+             type: "turn.aborted",
+             threadId: input.threadId,
+             turnId: input.turnId,
+-            payload: {
+-              reason: "interrupted",
+-              ...(usage !== undefined ? { tokenUsage: toTurnTokenUsage(usage) } : {}),
+-            },
++            payload,
            });
 -          return "interrupted" as const;
 +          return { outcome: "interrupted", usage, stopReason: undefined } as const;
@@ -277,7 +344,23 @@ back into the exit-code decision so an interrupt stays an abort.
          }
  
          // Failure path. Prefer a structured message from stderr; exit codes
-@@ -834,7 +919,80 @@
+@@ -808,11 +937,12 @@
+           resultSubtype === "error"
+             ? `Command Code turn failed${exitCode !== 0 ? ` (exit ${exitCode})` : ""}`
+             : `Command Code exited with code ${exitCode}`;
+-        const message = (
+-          typeof stderrMessage === "string" && stderrMessage.length > 0
++        const undeliveredNote = yield* undeliveredSteerNote(input.threadId, input.turnId);
++        const message =
++          (typeof stderrMessage === "string" && stderrMessage.length > 0
+             ? `${detail}: ${stderrMessage}`
+             : detail
+-        ).slice(0, 2_000);
++          ).slice(0, 1_900) + (undeliveredNote.length === 0 ? "" : ` ${undeliveredNote}`);
+         const errorClass =
+           exitCode === 3 || exitCode === 4
+             ? ("permission_error" as const)
+@@ -834,7 +964,80 @@
            turnId: input.turnId,
            payload: { state: "failed", errorMessage: message },
          });
@@ -359,7 +442,7 @@ back into the exit-code decision so an interrupt stays an abort.
        });
  
      const runTurn = (input: {
-@@ -911,8 +1069,8 @@
+@@ -911,8 +1114,8 @@
        sendTurn: (input: ProviderSendTurnInput) =>
          Effect.gen(function* () {
            const session = yield* getSession(input.threadId);
@@ -370,7 +453,7 @@ back into the exit-code decision so an interrupt stays an abort.
              return yield* new ProviderAdapterValidationError({
                provider: driverKind,
                operation: "sendTurn",
-@@ -920,23 +1078,45 @@
+@@ -920,23 +1123,45 @@
              });
            }
            const model = input.modelSelection?.model ?? session.model;
@@ -428,7 +511,7 @@ back into the exit-code decision so an interrupt stays an abort.
                : {}),
 --- a/apps/server/src/provider/Layers/CommandCodeAdapter.test.ts
 +++ b/apps/server/src/provider/Layers/CommandCodeAdapter.test.ts
-@@ -135,6 +135,73 @@
+@@ -135,6 +135,133 @@
      }
    }, 30_000);
  
@@ -499,6 +582,94 @@ back into the exit-code decision so an interrupt stays an abort.
 +    }
 +  }, 30_000);
 +
++  it("names the mid-turn messages a failed turn never delivered", async () => {
++    const harness = prepareMockHarness();
++    try {
++      await runScoped(
++        Effect.gen(function* () {
++          const instanceId = ProviderInstanceId.make("commandCodeTest");
++          const threadId = ThreadId.make("thread-failed-steer");
++          const adapter = yield* makeCommandCodeAdapter(makeConfig(harness.binaryPath), {
++            driverKind: ProviderDriverKind.make("commandCode"),
++            instanceId,
++            environment: {
++              ...process.env,
++              T3_MOCK_ARGV_LOG: harness.argvLogPath,
++              // Hold the first process, then fail the run while a steer waits.
++              T3_MOCK_HANG: "1",
++              T3_MOCK_EXIT_CODE: "8",
++            },
++          });
++          yield* adapter.startSession({ threadId, cwd: harness.cwd, runtimeMode: "full-access" });
++
++          const eventsFiber = yield* Effect.forkScoped(
++            Stream.runCollect(
++              adapter.streamEvents.pipe(
++                Stream.takeUntil((event) => event.type === "turn.completed"),
++              ),
++            ),
++          );
++          const turnStartedFiber = yield* Effect.forkScoped(
++            adapter.streamEvents.pipe(
++              Stream.takeUntil((event) => event.type === "turn.started"),
++              Stream.runDrain,
++            ),
++          );
++          const sendFiber = yield* Effect.forkScoped(
++            adapter.sendTurn({ threadId, input: "primero" }),
++          );
++          yield* Fiber.join(turnStartedFiber);
++          yield* adapter.streamEvents.pipe(
++            Stream.takeUntil((event) => event.type === "content.delta"),
++            Stream.runDrain,
++          );
++          // Steers onto the run that is about to fail; the queue dies with it.
++          yield* adapter.sendTurn({ threadId, input: "segundo" });
++
++          yield* Fiber.join(sendFiber);
++          const events = Array.from(yield* Fiber.join(eventsFiber));
++          const terminal = events.at(-1);
++          expect(terminal?.type).toBe("turn.completed");
++          const failed = terminal?.type === "turn.completed" ? terminal.payload : undefined;
++          expect(failed?.state).toBe("failed");
++          expect(String(failed?.errorMessage)).toContain(
++            "1 message sent while this turn ran was not delivered; resend to continue.",
++          );
++        }),
++      );
++    } finally {
++      harness.cleanup();
++    }
++  }, 30_000);
++
    it("interrupts an in-flight turn and emits turn.aborted", async () => {
      const harness = prepareMockHarness();
      try {
+--- a/apps/server/src/provider/testFixtures/commandCodeHeadless/commandcode-mock-agent.cjs
++++ b/apps/server/src/provider/testFixtures/commandCodeHeadless/commandcode-mock-agent.cjs
+@@ -9,6 +9,7 @@
+  *   T3_MOCK_SESSION   session id to report (default "mock-session-1")
+  *   T3_MOCK_HANG=1    stop emitting after the first message chunk and hold
+  *                     the process open until killed (interrupt tests)
++ *   T3_MOCK_EXIT_CODE finish with this exit code (default 0), for failure tests
+  */
+ "use strict";
+ 
+@@ -17,6 +18,8 @@
+ const sessionId = process.env.T3_MOCK_SESSION || "mock-session-1";
+ const argvLogPath = process.env.T3_MOCK_ARGV_LOG;
+ const hang = process.env.T3_MOCK_HANG === "1";
++const exitCode = Number.parseInt(process.env.T3_MOCK_EXIT_CODE || "0", 10);
++process.exitCode = Number.isNaN(exitCode) ? 0 : exitCode;
+ 
+ let prompt = "";
+ process.stdin.setEncoding("utf8");
+@@ -46,7 +49,7 @@
+     // us. If the kill does not reach the node process, this bounds the wait.
+     process.stdout.write("", () => {
+       setTimeout(() => {
+-        process.exit(0);
++        process.exit(process.exitCode ?? 0);
+       }, 4_000);
+     });
+     return;
