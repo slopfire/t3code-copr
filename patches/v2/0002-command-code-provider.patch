@@ -1,4 +1,4 @@
-# Base: v2 orchestrator stack (pingdotgg/t3code refs/pull/2829/head) commit 93205db6aced6ea9e28fb7a84b77ae697cb61b12
+# Base: v2 orchestrator stack (pingdotgg/t3code refs/pull/2829/head) commit 1ee1d0464271295d7b389cff343c5862caf31afa
 # Applies after 0001-acp-bundled-oh-my-pi-entry.patch.
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slopfire <hgrmeanwhile@gmail.com>
