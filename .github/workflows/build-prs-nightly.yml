@@ -1,10 +1,10 @@
-name: Build T3 Code + Command Code nightly
+name: Build T3 Code + pull requests nightly
 
-# Builds the upstream nightly from source with a pull request layered on top,
-# packages the resulting x86_64 AppImage as `t3code-cmd-nightly`, and submits it
-# to the same COPR project as the plain nightly. The plain nightly repackages an
-# official AppImage; this one has to compile, because no upstream artifact
-# contains the pull request.
+# Builds the upstream nightly from source with a set of upstream pull requests
+# layered on top, packages the resulting x86_64 AppImage as `t3code-prs-nightly`,
+# and submits it to the same COPR project as the plain nightly. The plain nightly
+# repackages an official AppImage; this one has to compile, because no upstream
+# artifact contains a pull request.
 
 on:
   schedule:
@@ -12,26 +12,28 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: Build even if this nightly tag and PR revision were already recorded
+        description: Build even if this nightly tag and pull request revisions were already recorded
         required: false
         default: false
         type: boolean
-      pr_ref:
-        description: Upstream pull request ref to layer onto the nightly tag
+      pr_refs:
+        description: Space separated upstream pull request refs to layer, in merge order
         required: false
-        default: refs/pull/10861/head
+        default: refs/pull/10861/head refs/pull/11973/head
         type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: t3code-cmd-nightly-copr
+  group: t3code-prs-nightly-copr
   cancel-in-progress: false
 
 env:
   T3CODE_REPO: pingdotgg/t3code
-  PR_NUMBER: "10861"
+  # The layered pull requests, in merge order. A ref is `refs/pull/<number>/head`
+  # and the number must be the pull request the AppImage is built from.
+  PR_REFS: ${{ inputs.pr_refs || 'refs/pull/10861/head refs/pull/11973/head' }}
   # The public identifiers upstream bakes into official builds (see its
   # .env.example). Not secrets: they only enable T3 Connect against the public
   # production deployment, and without them the app builds with cloud disabled.
@@ -42,13 +44,14 @@ env:
 
 jobs:
   resolve:
-    name: Resolve upstream nightly and PR revision
+    name: Resolve the upstream nightly and the pull request revisions
     runs-on: ubuntu-latest
     outputs:
       should_build: ${{ steps.release.outputs.should_build }}
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
-      pr_sha: ${{ steps.release.outputs.pr_sha }}
+      # `10861:<sha> 11973:<sha>`, in merge order.
+      pr_spec: ${{ steps.release.outputs.pr_spec }}
       key: ${{ steps.release.outputs.key }}
     steps:
       - uses: actions/checkout@v5
@@ -65,22 +68,39 @@ jobs:
           set -euo pipefail
           tag="$(./scripts/resolve-latest-nightly.sh)"
           version="${tag#v}"
-          pr_sha="$(gh api "repos/${T3CODE_REPO}/pulls/${PR_NUMBER}" --jq '.head.sha')"
-          test -n "$pr_sha" || { echo "Could not resolve PR ${PR_NUMBER}." >&2; exit 1; }
-          # Local patches ride on top of the pull request, so the key has to
-          # move when they change; otherwise a fixed patch never rebuilds.
-          patch_digest="$(cat patches/*.patch 2>/dev/null | sha256sum | cut -c1-12)"
-          key="${tag}+${pr_sha}+p${patch_digest}"
+
+          pr_spec=""
+          sha_key=""
+          for ref in ${PR_REFS}; do
+            number="${ref#refs/pull/}"
+            number="${number%/head}"
+            if [[ ! "$number" =~ ^[0-9]+$ ]]; then
+              echo "Unsupported pull request ref: ${ref}" >&2
+              exit 1
+            fi
+            sha="$(gh api "repos/${T3CODE_REPO}/pulls/${number}" --jq '.head.sha')"
+            test -n "$sha" || { echo "Could not resolve PR ${number}." >&2; exit 1; }
+            pr_spec+="${pr_spec:+ }${number}:${sha}"
+            sha_key+="+${sha}"
+          done
+          test -n "$pr_spec" || { echo "No pull requests to layer." >&2; exit 1; }
+
+          # Local patches and conflict resolutions ride on top of the pull
+          # requests, so the key has to move when they change; otherwise a fixed
+          # patch or resolution never rebuilds.
+          layer_digest="$(find patches resolutions -type f -print0 | sort -z \
+            | xargs -0 -r cat | sha256sum | cut -c1-12)"
+          key="${tag}${sha_key}+p${layer_digest}"
           echo "Resolved upstream nightly: $tag"
-          echo "Pull request ${PR_NUMBER} head: $pr_sha"
-          echo "Local patch digest: p${patch_digest}"
+          echo "Pull requests: ${pr_spec}"
+          echo "Layer digest: p${layer_digest}"
 
           printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
-          printf 'pr_sha=%s\n' "$pr_sha" >> "$GITHUB_OUTPUT"
+          printf 'pr_spec=%s\n' "$pr_spec" >> "$GITHUB_OUTPUT"
           printf 'key=%s\n' "$key" >> "$GITHUB_OUTPUT"
 
-          last="$(cat packaging/cmd/last-built-key 2>/dev/null || true)"
+          last="$(cat packaging/prs/last-built-key 2>/dev/null || true)"
           if [[ "$FORCE" == "true" || "$key" != "$last" ]]; then
             echo "should_build=true" >> "$GITHUB_OUTPUT"
             echo "Will build (force=${FORCE} last=${last:-none})"
@@ -90,7 +110,7 @@ jobs:
           fi
 
   build:
-    name: Build patched AppImage
+    name: Build the layered AppImage
     needs: resolve
     if: needs.resolve.outputs.should_build == 'true'
     runs-on: ubuntu-latest
@@ -107,43 +127,84 @@ jobs:
             !/.repos/
           sparse-checkout-cone-mode: false
 
-      - name: Layer pull request ${{ env.PR_NUMBER }} on top
+      # This job checks out upstream, so the layer files that live in this
+      # repository (patches/, resolutions/) are fetched by API rather than
+      # checked out into the build tree.
+      - name: Fetch the layer files
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_REF: ${{ inputs.pr_ref || 'refs/pull/10861/head' }}
         run: |
           set -euo pipefail
-          git config user.name 't3code-cmd-nightly'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git fetch --no-tags origin "+${PR_REF}:refs/remotes/origin/pr"
-          if ! git merge --no-edit refs/remotes/origin/pr; then
-            echo "::error::Could not merge ${PR_REF} onto ${{ needs.resolve.outputs.tag }}."
-            exit 1
-          fi
-          echo "Built commit: $(git rev-parse HEAD)"
-          echo "Expected PR head: ${{ needs.resolve.outputs.pr_sha }}"
+          mkdir -p "$RUNNER_TEMP/layers"
+          curl --fail --silent --show-error --location \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/tarball/${{ github.sha }}" \
+            | tar --extract --gzip --strip-components=1 --directory "$RUNNER_TEMP/layers"
+          ls -R "$RUNNER_TEMP/layers/patches" "$RUNNER_TEMP/layers/resolutions" 2>/dev/null || true
 
-      # This job checks out upstream, so the patches that live in this repository
-      # are fetched by API rather than checked out into the build tree.
-      - name: Fetch local patches
+      - name: Layer the pull requests on top
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          PR_SPEC: ${{ needs.resolve.outputs.pr_spec }}
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/patches"
-          gh api "repos/${GITHUB_REPOSITORY}/contents/patches?ref=${{ github.sha }}" \
-            --jq '.[] | select(.name | endswith(".patch")) | .name' > "$RUNNER_TEMP/patches/list"
-          while IFS= read -r name; do
-            echo "Fetching ${name}"
-            gh api "repos/${GITHUB_REPOSITORY}/contents/patches/${name}?ref=${{ github.sha }}" \
-              -H 'Accept: application/vnd.github.raw' > "$RUNNER_TEMP/patches/${name}"
-          done < "$RUNNER_TEMP/patches/list"
+          git config user.name 't3code-prs-nightly'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          for ref in ${PR_REFS}; do
+            number="${ref#refs/pull/}"
+            number="${number%/head}"
+            if [[ ! "$number" =~ ^[0-9]+$ ]]; then
+              echo "::error::Unsupported pull request ref: ${ref}"
+              exit 1
+            fi
+            git fetch --no-tags origin "+${ref}:refs/remotes/origin/pr-${number}"
+            target="refs/remotes/origin/pr-${number}"
+            echo "Merging ${ref} ($(git rev-parse --short "${target}"))"
+            if git merge --no-edit "$target"; then
+              continue
+            fi
+
+            # The pull request does not merge onto the nightly tag. It only
+            # ships with a recorded resolution of the conflicting files: every
+            # conflicted path is replaced by the resolved file checked into
+            # resolutions/<number>/, and the recorded hashes prove both sides
+            # are still the revisions that resolution was written against.
+            resolutions="$RUNNER_TEMP/layers/resolutions/${number}"
+            if [[ ! -f "${resolutions}/conflicts.tsv" ]]; then
+              echo "::error::${ref} does not merge onto ${TAG} and resolutions/${number}/conflicts.tsv is missing."
+              exit 1
+            fi
+            while read -r head_hash pr_hash path; do
+              [[ -n "$path" ]] || continue
+              actual_head="$(git show "HEAD:${path}" | sha256sum | cut -d' ' -f1)"
+              actual_pr="$(git show "${target}:${path}" | sha256sum | cut -d' ' -f1)"
+              if [[ "$actual_head" != "$head_hash" || "$actual_pr" != "$pr_hash" ]]; then
+                echo "::error::The recorded resolution for ${path} is stale: the nightly tag or PR ${number} changed it. Resolve the conflict again and refresh resolutions/${number}/."
+                exit 1
+              fi
+              install -Dpm0644 "${resolutions}/${path}" "${path}"
+              git add "${path}"
+              echo "Installed the recorded resolution for ${path}"
+            done < "${resolutions}/conflicts.tsv"
+
+            unresolved="$(git diff --name-only --diff-filter=U)"
+            if [[ -n "$unresolved" ]]; then
+              echo "::error::PR ${number} conflicts in files with no recorded resolution:"
+              echo "$unresolved"
+              exit 1
+            fi
+            git commit --no-edit
+          done
+          echo "Built commit: $(git rev-parse HEAD)"
+          echo "Expected pull requests: ${PR_SPEC}"
 
       - name: Apply local patches
         run: |
           set -euo pipefail
           shopt -s nullglob
-          patches=("$RUNNER_TEMP"/patches/*.patch)
+          patches=("$RUNNER_TEMP"/layers/patches/*.patch)
           if [ ${#patches[@]} -eq 0 ]; then
             echo "No local patches to apply."
             exit 0
@@ -151,7 +212,7 @@ jobs:
           for patch in "${patches[@]}"; do
             echo "Applying $(basename "${patch}")"
             if ! git apply --verbose "${patch}"; then
-              echo "::error::Could not apply $(basename "${patch}"); the pull request changed the files it touches."
+              echo "::error::Could not apply $(basename "${patch}"); the pull requests changed the files it touches."
               exit 1
             fi
           done
@@ -180,11 +241,18 @@ jobs:
             --filter=@t3tools/desktop... \
             --filter=@t3tools/scripts...
 
-      # The patch is the only part of this build upstream CI never sees, so its
-      # focused test runs here before anything is packaged.
+      # The patches are the only part of this build upstream CI never sees, so
+      # the focused test of the adapter they touch runs here before anything is
+      # packaged. It needs the Command Code pull request in the layer set.
       - name: Test the Command Code adapter
         working-directory: apps/server
-        run: vp test run src/provider/Layers/CommandCodeAdapter.test.ts
+        run: |
+          set -euo pipefail
+          if [[ " ${PR_REFS} " != *" refs/pull/10861/head "* ]]; then
+            echo "Pull request 10861 is not layered; skipping the Command Code adapter test."
+            exit 0
+          fi
+          vp test run src/provider/Layers/CommandCodeAdapter.test.ts
 
       - name: Align package versions
         run: node scripts/update-release-package-versions.ts "${{ needs.resolve.outputs.version }}"
@@ -214,7 +282,7 @@ jobs:
       - name: Upload the AppImage
         uses: actions/upload-artifact@v4
         with:
-          name: cmd-appimage
+          name: prs-appimage
           path: ${{ runner.temp }}/T3-Code-*.AppImage
           if-no-files-found: error
           retention-days: 14
@@ -242,7 +310,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
-          name: cmd-appimage
+          name: prs-appimage
           path: appimage
 
       # Archive the exact bytes the RPM carries before publishing anything that
@@ -253,22 +321,29 @@ jobs:
           VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           set -euo pipefail
-          tag="cmd-nightly"
+          tag="prs-nightly"
           if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" --prerelease \
-              --title 'T3 Code + Command Code nightly AppImages' \
-              --notes 'Rolling prerelease holding the source-built AppImages that the t3code-cmd-nightly RPM repackages.'
+              --title 'T3 Code + pull requests nightly AppImages' \
+              --notes 'Rolling prerelease holding the source-built AppImages that the t3code-prs-nightly RPM repackages.'
           fi
           gh release upload "$tag" --repo "$GITHUB_REPOSITORY" \
             "appimage/T3-Code-${VERSION}-x86_64.AppImage" --clobber
 
       - name: Build source RPM
+        env:
+          PR_SPEC: ${{ needs.resolve.outputs.pr_spec }}
+          TAG: ${{ needs.resolve.outputs.tag }}
         run: |
-          ./scripts/build-cmd-srpm.sh \
-            "${{ needs.resolve.outputs.tag }}" \
-            "${PR_NUMBER}" \
-            "${{ needs.resolve.outputs.pr_sha }}" \
-            appimage/T3-Code-*.AppImage
+          set -euo pipefail
+          # `10861:<sha> 11973:<sha>` becomes the positional number/sha pairs
+          # build-prs-srpm.sh records in the provenance file.
+          pr_args=()
+          for entry in ${PR_SPEC}; do
+            pr_args+=("${entry%%:*}")
+            pr_args+=("${entry#*:}")
+          done
+          ./scripts/build-prs-srpm.sh "$TAG" appimage/T3-Code-*.AppImage "${pr_args[@]}"
 
       - name: Configure COPR credentials
         env:
@@ -302,14 +377,14 @@ jobs:
             git reset --hard FETCH_HEAD
             git branch -M main
           fi
-          mkdir -p packaging/cmd
-          printf '%s\n' "$KEY" > packaging/cmd/last-built-key
+          mkdir -p packaging/prs
+          printf '%s\n' "$KEY" > packaging/prs/last-built-key
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add packaging/cmd/last-built-key
+          git add packaging/prs/last-built-key
           if git diff --cached --quiet; then
-            echo "cmd nightly $KEY is already recorded"
+            echo "prs nightly $KEY is already recorded"
             exit 0
           fi
-          git commit -m "chore: record T3 Code cmd nightly $KEY"
+          git commit -m "chore: record T3 Code prs nightly $KEY"
           git push

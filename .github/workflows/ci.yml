@@ -21,11 +21,29 @@ jobs:
       - uses: actions/checkout@v5
       - name: Install RPM tooling
         run: dnf --assumeyes install rpm-build rpmdevtools
-      - name: Render and validate the RPM spec
+      - name: Render and validate the RPM specs
         run: |
           ./scripts/render-spec.sh v0.0.29-nightly.20260712.791 /tmp/t3code-nightly.spec
           rpmspec --parse /tmp/t3code-nightly.spec >/dev/null
-          ./scripts/render-cmd-spec.sh v0.0.29-nightly.20260712.791 10861 /tmp/t3code-cmd-nightly.spec
-          rpmspec --parse /tmp/t3code-cmd-nightly.spec >/dev/null
+          ./scripts/render-prs-spec.sh v0.0.29-nightly.20260712.791 /tmp/t3code-prs-nightly.spec 10861 11973
+          rpmspec --parse /tmp/t3code-prs-nightly.spec >/dev/null
       - name: Check shell scripts
         run: bash -n scripts/*.sh packaging/t3code
+      - name: Check the recorded conflict resolutions
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for manifest in resolutions/*/conflicts.tsv; do
+            directory="$(dirname "$manifest")"
+            while read -r head_hash pr_hash path; do
+              [[ -n "$path" ]] || continue
+              if [[ ! -f "${directory}/${path}" ]]; then
+                echo "::error::${manifest} names ${path}, which is missing."
+                exit 1
+              fi
+              if grep -q '^<<<<<<< \|^>>>>>>>' "${directory}/${path}"; then
+                echo "::error::${directory}/${path} still holds conflict markers."
+                exit 1
+              fi
+            done < "$manifest"
+          done

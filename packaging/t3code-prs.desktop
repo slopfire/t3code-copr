@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=T3 Code (Command Code Nightly)
+Name=T3 Code (PR Nightly)
 Comment=Minimal GUI for coding agents
 Exec=t3code %U
 Icon=t3code

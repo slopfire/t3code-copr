@@ -4,17 +4,22 @@ RPM packages for the x86_64 T3 Code desktop nightly:
 
 - **`t3code-nightly`** repackages the official upstream AppImage. It does not
   build T3 Code from source.
-- **`t3code-cmd-nightly`** is that same nightly with
-  [pingdotgg/t3code#10861](https://github.com/pingdotgg/t3code/pull/10861)
-  (the Command Code provider driver) layered on top. Upstream publishes no
-  AppImage containing an open pull request, so this one is compiled from source
-  in GitHub Actions and packaged the same way afterwards. Local fixes from
-  `patches/` are applied after the pull request; see
-  [Local patches](#local-patches).
+- **`t3code-prs-nightly`** is that same nightly with a set of upstream pull
+  requests layered on top (currently
+  [pingdotgg/t3code#10861](https://github.com/pingdotgg/t3code/pull/10861), the
+  Command Code provider driver, and
+  [pingdotgg/t3code#11973](https://github.com/pingdotgg/t3code/pull/11973), the
+  Oh My Pi provider integration). Upstream publishes no AppImage containing an
+  open pull request, so this one is compiled from source in GitHub Actions and
+  packaged the same way afterwards. Local fixes from `patches/` are applied
+  after the pull requests, and pull requests that do not merge onto the nightly
+  tag need the resolved files in `resolutions/`; see
+  [Local patches](#local-patches) and [Conflict resolutions](#conflict-resolutions).
 
-`t3code-cmd-nightly` installs the same files as `t3code-nightly` and carries
+`t3code-prs-nightly` installs the same files as `t3code-nightly` and carries
 `Obsoletes: t3code-nightly` plus a higher release, so it replaces the plain
-nightly instead of conflicting with it.
+nightly instead of conflicting with it. It also obsoletes the retired
+`t3code-cmd-nightly` package, which this one replaced.
 
 ## COPR setup
 
@@ -32,19 +37,20 @@ nightly instead of conflicting with it.
    - `Publish T3 Code nightly to COPR` checks the official prereleases every
      hour and submits the `t3code-nightly` source RPM only when it sees a new
      tag. It records the successful submission in `packaging/last-built-tag`.
-   - `Build T3 Code + Command Code nightly` compiles the upstream nightly with
-     PR #10861 on top, archives the AppImage on the `cmd-nightly` prerelease,
-     and submits the `t3code-cmd-nightly` source RPM. It rebuilds only when the
-     nightly tag or the PR head commit changed, recording the pair in
-     `packaging/cmd/last-built-key`.
+   - `Build T3 Code + pull requests nightly` compiles the upstream nightly with
+     the layered pull requests on top, archives the AppImage on the `prs-nightly`
+     prerelease, and submits the `t3code-prs-nightly` source RPM. It rebuilds
+     only when the nightly tag, a pull request revision, or a layer file
+     changed, recording the combination in `packaging/prs/last-built-key`.
 
 Both submit into the same COPR project, which ends up holding two packages.
 
-Use **Run workflow** with `force` when a COPR rebuild of the same upstream tag
-is needed. The cmd workflow additionally takes a `pr_ref` input, which defaults
-to `refs/pull/10861/head`; point it at a different pull request ref to package
-another PR instead. The normal CI workflow validates the RPM specs on pushes and
-pull requests but never accesses COPR credentials.
+Use **Run workflow** with `force` when a COPR rebuild of the same inputs is
+needed. The prs workflow additionally takes a `pr_refs` input, which defaults to
+`refs/pull/10861/head refs/pull/11973/head`; list the pull request refs in the
+order they must be merged to change the set. The normal CI workflow validates
+the RPM specs and the recorded resolutions on pushes and pull requests but never
+accesses COPR credentials.
 
 Only upstream `-nightly.` prereleases are packaged. Upstream also publishes
 `-preview.` releases, but those are maintainer test builds (marked "do not
@@ -53,9 +59,9 @@ install"), so they are intentionally ignored. Tag selection lives in
 
 ## Local patches
 
-`patches/*.patch` are applied on top of the pull request before the AppImage is
+`patches/*.patch` are applied after the pull requests and before the AppImage is
 built, and the build key includes a digest of them, so editing a patch triggers
-a rebuild. Each patch must apply cleanly to the pull request head; if upstream
+a rebuild. Each patch must apply cleanly to the layered tree; if upstream
 changes the file it touches, the workflow fails instead of quietly shipping
 something else.
 
@@ -65,6 +71,42 @@ something else.
 
 The patch is not upstreamed: once the pull request (or an equivalent change)
 carries the fix, delete the patch file and this section.
+
+## Conflict resolutions
+
+A layered pull request usually merges onto the nightly tag by itself. When one
+does not, `git merge` stops, and the workflow ships it only if the conflicting
+files have a recorded resolution:
+
+- `resolutions/<pull request number>/conflicts.tsv` lists, for every conflicted
+  file, `sha256(<nightly side>) sha256(<pull request side>) path`.
+- `resolutions/<number>/<path>` holds the resolved content of that file, which
+  must carry both sides' intent and no conflict markers.
+
+The workflow compares both recorded hashes against the revisions it is merging.
+A mismatch means the nightly tag or the pull request moved inside a file the
+resolution covers, so the resolution can no longer be trusted; the build stops
+with an error instead of shipping a merge nobody reviewed. To refresh one:
+
+```sh
+# in a scratch clone of upstream, at the nightly tag
+git fetch --no-tags origin \
+  "+refs/pull/11973/head:refs/remotes/origin/pr-11973"
+git merge --no-edit refs/remotes/origin/pr-10861
+git merge --no-edit refs/remotes/origin/pr-11973   # stops on the conflict
+# resolve the markers in the conflicted files, then for each conflicted path:
+sha256sum <(git show HEAD:PATH) <(git show refs/remotes/origin/pr-11973:PATH)
+# copy the resolved file to resolutions/11973/PATH and record both hashes in
+# resolutions/11973/conflicts.tsv, committing the result here
+```
+
+| Resolution | Why |
+| --- | --- |
+| `resolutions/11973/apps/server/src/provider/acp/AcpSessionRuntime.ts` | PR #11973 replaces the combined start/session check with an adopted-session-id path, while the nightly added an assistant-updates guard in the same place. The resolution keeps the pull request's adoption block first, so a `/fresh` session change is never dropped, then the nightly's guard. |
+| `resolutions/11973/apps/desktop/scripts/ensure-electron-runtime.mjs` | PR #11973 adds the Windows extraction branch next to the line the nightly changed. The resolution keeps the nightly's `distDir` variable and the pull request's branch. |
+
+The resolutions are not upstreamed: once a pull request merges on its own, the
+resolution is never read and can be deleted with its directory.
 
 ## Local build
 
@@ -77,32 +119,34 @@ sudo dnf install rpm-build rpmdevtools curl
 
 The source RPM is written to `rpmbuild/SRPMS/`.
 
-The cmd flavor repackages an AppImage that only CI builds, so it needs one on
+The prs flavor repackages an AppImage that only CI builds, so it needs one on
 disk:
 
 ```sh
-./scripts/build-cmd-srpm.sh v0.0.29-nightly.20260712.791 10861 <pr-sha> \
-  T3-Code-0.0.29-nightly.20260712.791-x86_64.AppImage
+./scripts/build-prs-srpm.sh v0.0.29-nightly.20260712.791 \
+  T3-Code-0.0.29-nightly.20260712.791-x86_64.AppImage \
+  10861 <pr-10861-sha> 11973 <pr-11973-sha>
 ```
 
-That AppImage has to come from the pull request plus the patches in `patches/`
-applied; CI is the only place that builds it, so the local path is mostly for
-packaging an AppImage you already have.
+That AppImage has to come from the pull requests, the patches in `patches/`, and
+the resolutions in `resolutions/`; CI is the only place that builds it, so the
+local path is mostly for packaging an AppImage you already have.
 
-## Installing the cmd build over the plain nightly
+## Installing the prs build over the plain nightly
 
 The two packages own the same files, so install them as a swap rather than
 alongside each other:
 
 ```sh
-sudo dnf swap t3code-nightly t3code-cmd-nightly
+sudo dnf swap t3code-nightly t3code-prs-nightly
 ```
 
-`t3code-cmd-nightly` also obsoletes `t3code-nightly`, so a plain
-`sudo dnf upgrade` reaches the same result.
+`t3code-prs-nightly` also obsoletes `t3code-nightly` and the retired
+`t3code-cmd-nightly`, so a plain `sudo dnf upgrade` reaches the same result.
 
 ## Notes
 
 These are unofficial packages. T3 Code is distributed under the MIT license.
-`t3code-nightly` ships the upstream AppImage unchanged; `t3code-cmd-nightly`
-ships an AppImage built from upstream sources plus PR #10861.
+`t3code-nightly` ships the upstream AppImage unchanged; `t3code-prs-nightly`
+ships an AppImage built from upstream sources plus the pull requests, patches,
+and resolutions named above.

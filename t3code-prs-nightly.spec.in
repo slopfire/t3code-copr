@@ -1,5 +1,6 @@
 %global upstream_version @UPSTREAM_VERSION@
-%global cmd_pr @PR_NUMBER@
+%global pr_set @PR_SET@
+%global pr_list @PR_LIST@
 
 # The AppImage is a prebuilt opaque ELF bundle without a build ID.
 %global _build_id_links none
@@ -8,10 +9,10 @@
 %global __brp_strip_comment_note %{nil}
 %global __brp_strip_lto %{nil}
 
-Name:           t3code-cmd-nightly
+Name:           t3code-prs-nightly
 Version:        %(echo %{upstream_version} | sed 's/-.*//')
-Release:        1.cmd.pr%{cmd_pr}.%(echo %{upstream_version} | sed 's/.*-nightly\.//')%{?dist}
-Summary:        Minimal GUI for coding agents (nightly build with the Command Code provider)
+Release:        1.prs.%{pr_set}.%(echo %{upstream_version} | sed 's/.*-nightly\.//')%{?dist}
+Summary:        Minimal GUI for coding agents (nightly build with upstream pull requests layered)
 
 License:        MIT
 URL:            https://github.com/pingdotgg/t3code
@@ -19,23 +20,28 @@ Source0:        T3-Code-%{upstream_version}-x86_64.AppImage
 Source1:        t3code
 Source2:        t3code.desktop
 Source3:        LICENSE
-Source4:        upstream-pr-%{cmd_pr}.txt
+Source4:        upstream-prs.txt
 ExclusiveArch:  x86_64
 
-# Installs over the plain nightly package: same paths, newer release, so dnf
-# swaps t3code-nightly for this one instead of erroring on file conflicts. Both
-# packages track the same upstream nightly, and this one's release always sorts
-# above the plain nightly's `0.nightly.*`, so `<=` covers the concurrent build.
+# Installs over the plain nightly and over the retired Command Code package:
+# same paths, newer release, so dnf swaps either of them for this package
+# instead of erroring on file conflicts. All three track the same upstream
+# nightly, and this package's release always sorts above the plain nightly's
+# `0.nightly.*` and the Command Code package's `1.cmd.pr*`, so `<=` covers the
+# concurrent builds.
 Provides:       t3code = %{version}-%{release}
 Obsoletes:      t3code-nightly <= %{version}-%{release}
+Obsoletes:      t3code-cmd-nightly <= %{version}-%{release}
 
 %description
 T3 Code is a minimal GUI for coding agents.
 
-This unofficial package is built from upstream nightly sources with upstream
-pull request %{cmd_pr} layered on top, which adds Command Code as a provider
-driver. It is otherwise the same x86_64 nightly desktop build, so it replaces
-t3code-nightly and provides the same `t3code` entry point.
+This unofficial package is built from upstream nightly sources with the
+upstream pull requests %{pr_list} layered on top, followed by the local patches
+carried by this packaging repository. %{_docdir}/%{name}/upstream-prs.txt names
+every upstream commit and every local patch that went into the build. It is
+otherwise the same x86_64 nightly desktop build, so it replaces t3code-nightly
+and provides the same `t3code` entry point.
 
 %prep
 %autosetup -c -T
@@ -45,7 +51,7 @@ install -Dpm0755 %{SOURCE0} %{buildroot}%{_libexecdir}/t3code/t3code.AppImage
 install -Dpm0755 %{SOURCE1} %{buildroot}%{_bindir}/t3code
 install -Dpm0644 %{SOURCE2} %{buildroot}%{_datadir}/applications/t3code.desktop
 install -Dpm0644 %{SOURCE3} %{buildroot}%{_licensedir}/%{name}/LICENSE
-install -Dpm0644 %{SOURCE4} %{buildroot}%{_docdir}/%{name}/upstream-pr-%{cmd_pr}.txt
+install -Dpm0644 %{SOURCE4} %{buildroot}%{_docdir}/%{name}/upstream-prs.txt
 
 # Install application icons from the AppImage (FUSE-free extract).
 extractdir="%{_builddir}/%{name}-icons"
@@ -63,7 +69,7 @@ done
 
 %files
 %license %{_licensedir}/%{name}/LICENSE
-%doc %{_docdir}/%{name}/upstream-pr-%{cmd_pr}.txt
+%doc %{_docdir}/%{name}/upstream-prs.txt
 %{_bindir}/t3code
 %{_libexecdir}/t3code/t3code.AppImage
 %{_datadir}/applications/t3code.desktop
@@ -71,4 +77,4 @@ done
 
 %changelog
 * @CHANGELOG_DATE@ T3 Code COPR Maintainers <copr@example.invalid> - %{version}-%{release}
-- Package upstream nightly %{upstream_version} with pull request %{cmd_pr}
+- Package upstream nightly %{upstream_version} with pull requests %{pr_list}
