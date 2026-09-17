@@ -1,16 +1,18 @@
 name: Build T3 Code v2 orchestrator nightly
 
-# Builds the upstream nightly from source with the v2 orchestrator pull request
-# (#2829, which carries the Pi provider and the generic ACP registry) layered on
-# top, packages the resulting x86_64 AppImage as `t3code-v2-nightly`, and submits
-# it to the same COPR project as the plain nightly. The plain nightly repackages
-# an official AppImage; this one has to compile, because no upstream artifact
-# contains a pull request.
+# Builds the v2 orchestrator branch (pull request #2829, which carries the Pi
+# provider and the generic ACP registry) from source, packages the resulting
+# x86_64 AppImage as `t3code-v2-nightly`, and submits it to the same COPR project
+# as the plain nightly.
 #
-# The Command Code (#10861) and Oh My Pi (#11973) drivers cannot ride along: both
-# implement main's `adapter` field, and the v2 orchestrator requires
-# `orchestrationAdapter` with its own `*AdapterV2` implementations. They stay in
-# the t3code-prs-nightly flavor.
+# Unlike the prs flavor, this one does not merge its pull requests onto the
+# nightly tag. The branch is a rewrite of the orchestration layer that trails
+# main, so merging it onto a newer nightly conflicts as soon as main moves past
+# its base; the flavor therefore builds the branch head itself, which is the
+# revision its author tests. There is no nightly tag to track either: the version
+# and the build key come from that commit, and patches/v2/ carries what the
+# main-side pull requests cannot provide here (the Command Code provider and the
+# bundled Oh My Pi ACP entry, both written against the v2 interfaces).
 
 on:
   schedule:
@@ -58,6 +60,8 @@ jobs:
     outputs:
       should_build: ${{ steps.release.outputs.should_build }}
       tag: ${{ steps.release.outputs.tag }}
+      # The pinned orchestrator commit this build is made from.
+      sha: ${{ steps.release.outputs.sha }}
       version: ${{ steps.release.outputs.version }}
       # `10861:<sha> 11973:<sha>`, in merge order.
       pr_spec: ${{ steps.release.outputs.pr_spec }}
@@ -75,8 +79,11 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="$(./scripts/resolve-latest-nightly.sh)"
-          version="${tag#v}"
+          # No nightly tag here: this flavor's source is the branch head the pull
+          # requests resolve to. The synthetic tag below keeps the spec renderer's
+          # interface intact and moves only when that commit does.
+          tag=""
+          version=""
 
           pr_spec=""
           sha_key=""
@@ -93,6 +100,25 @@ jobs:
             sha_key+="+${sha}"
           done
           test -n "$pr_spec" || { echo "No pull requests to layer." >&2; exit 1; }
+          # The first ref is this flavor's source: the orchestrator branch head.
+          sha="${pr_spec%% *}"
+          sha="${sha#*:}"
+          # The base version still comes from upstream's latest nightly, so the
+          # package version stays recognisable. The stamp and the build key come
+          # from the pinned commit instead, which is what this flavor tracks.
+          base="$(./scripts/resolve-latest-nightly.sh)"
+          base_version="${base#v}"
+          base_version="${base_version%%-nightly.*}"
+          test -n "$base_version" || {
+            echo "Could not read the base version out of ${base}." >&2
+            exit 1
+          }
+          committed="$(gh api "repos/${T3CODE_REPO}/commits/${sha}" --jq '.commit.committer.date')"
+          test -n "$committed" || { echo "Could not read the commit date of ${sha}." >&2; exit 1; }
+          stamp="${committed:0:4}${committed:5:2}${committed:8:2}.${sha:0:12}"
+          version="${base_version}-nightly.${stamp}"
+          tag="v${version}"
+          echo "Pinned source: ${sha} (${tag}, base version from ${base})"
 
           # Local patches and conflict resolutions ride on top of the pull
           # requests, so the key has to move when they change; otherwise a fixed
@@ -110,12 +136,14 @@ jobs:
             layer_digest="$(find "${layer_paths[@]}" -type f -print0 | sort -z \
               | xargs -0 -r cat | sha256sum | cut -c1-12)"
           fi
-          key="${tag}${sha_key}+p${layer_digest}"
-          echo "Resolved upstream nightly: $tag"
+          # The key holds the base version, the pinned commit, and the layer
+          # digest: an upstream nightly stamp alone must not trigger a rebuild.
+          key="v${base_version}${sha_key}+p${layer_digest}"
           echo "Pull requests: ${pr_spec}"
           echo "Layer digest: p${layer_digest}"
 
           printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
           printf 'pr_spec=%s\n' "$pr_spec" >> "$GITHUB_OUTPUT"
           printf 'key=%s\n' "$key" >> "$GITHUB_OUTPUT"
@@ -136,15 +164,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      # The whole object store has to be present: the merge reads the merge-base
-      # blobs, and a sparse checkout makes actions/checkout fetch with
-      # `--filter=blob:none`, whose promisor fetch by object id fails for
-      # revisions the pull requests carry.
-      - name: Checkout upstream at the nightly tag
+      # The pinned branch head. Full history keeps the checkout honest about the
+      # commit it claims to build; a sparse checkout would make actions/checkout
+      # fetch with `--filter=blob:none`, whose promisor fetch by object id fails
+      # for revisions the branch carries.
+      - name: Checkout the pinned orchestrator commit
         uses: actions/checkout@v5
         with:
           repository: ${{ env.T3CODE_REPO }}
-          ref: ${{ needs.resolve.outputs.tag }}
+          ref: ${{ needs.resolve.outputs.sha }}
           fetch-depth: 0
 
       # This job checks out upstream, so the layer files that live in this
@@ -163,69 +191,25 @@ jobs:
             | tar --extract --gzip --strip-components=1 --directory "$RUNNER_TEMP/layers"
           ls -R "$RUNNER_TEMP/layers/patches" "$RUNNER_TEMP/layers/resolutions" 2>/dev/null || true
 
-      - name: Layer the pull requests on top
+      - name: Confirm the pinned orchestrator commit
         env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.resolve.outputs.tag }}
+          SHA: ${{ needs.resolve.outputs.sha }}
           PR_SPEC: ${{ needs.resolve.outputs.pr_spec }}
         run: |
           set -euo pipefail
-          git config user.name 't3code-v2-nightly'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          for ref in ${PR_REFS}; do
-            number="${ref#refs/pull/}"
-            number="${number%/head}"
-            if [[ ! "$number" =~ ^[0-9]+$ ]]; then
-              echo "::error::Unsupported pull request ref: ${ref}"
-              exit 1
-            fi
-            git fetch --no-tags origin "+${ref}:refs/remotes/origin/pr-${number}"
-            target="refs/remotes/origin/pr-${number}"
-            echo "Merging ${ref} ($(git rev-parse --short "${target}"))"
-            if git merge --no-edit "$target"; then
-              continue
-            fi
-
-            # The pull request does not merge onto the nightly tag. It only
-            # ships with a recorded resolution of the conflicting files: every
-            # conflicted path is replaced by the resolved file checked into
-            # resolutions/<number>/, and the recorded hashes prove both sides
-            # are still the revisions that resolution was written against.
-            resolutions="$RUNNER_TEMP/layers/resolutions/${number}"
-            # A merge that fails before it records its parents did not produce
-            # conflicts to resolve (a missing object, a refused ref), so the
-            # resolutions below would paper over an unfinished merge.
-            if [[ ! -f "$(git rev-parse --git-path MERGE_HEAD)" ]]; then
-              echo "::error::Merging ${ref} failed before it produced a conflict. Read the git output above; nothing was committed."
-              exit 1
-            fi
-            if [[ ! -f "${resolutions}/conflicts.tsv" ]]; then
-              echo "::error::${ref} does not merge onto ${TAG} and resolutions/${number}/conflicts.tsv is missing."
-              exit 1
-            fi
-            while read -r head_hash pr_hash path; do
-              [[ -n "$path" ]] || continue
-              actual_head="$(git show "HEAD:${path}" | sha256sum | cut -d' ' -f1)"
-              actual_pr="$(git show "${target}:${path}" | sha256sum | cut -d' ' -f1)"
-              if [[ "$actual_head" != "$head_hash" || "$actual_pr" != "$pr_hash" ]]; then
-                echo "::error::The recorded resolution for ${path} is stale: the nightly tag or PR ${number} changed it. Resolve the conflict again and refresh resolutions/${number}/."
-                exit 1
-              fi
-              install -Dpm0644 "${resolutions}/${path}" "${path}"
-              git add "${path}"
-              echo "Installed the recorded resolution for ${path}"
-            done < "${resolutions}/conflicts.tsv"
-
-            unresolved="$(git diff --name-only --diff-filter=U)"
-            if [[ -n "$unresolved" ]]; then
-              echo "::error::PR ${number} conflicts in files with no recorded resolution:"
-              echo "$unresolved"
-              exit 1
-            fi
-            git commit --no-edit
-          done
-          echo "Built commit: $(git rev-parse HEAD)"
-          echo "Expected pull requests: ${PR_SPEC}"
+          checked_out="$(git rev-parse HEAD)"
+          echo "Pinned commit: ${checked_out}"
+          test "$checked_out" = "$SHA" || {
+            echo "::error::Checked out ${checked_out}, expected ${SHA}."
+            exit 1
+          }
+          # A wrong ref would otherwise build a tree that quietly lacks the
+          # orchestrator and the providers this flavor exists for.
+          test -f apps/server/src/orchestration-v2/ProviderAdapter.ts || {
+            echo "::error::${SHA} is not the v2 orchestrator stack: orchestration-v2/ProviderAdapter.ts is missing."
+            exit 1
+          }
+          echo "Source pull requests: ${PR_SPEC}"
 
       - name: Apply local patches
         run: |
@@ -271,15 +255,26 @@ jobs:
       # The patches are the only part of this build upstream CI never sees, so
       # the focused test of the adapter they touch runs here before anything is
       # packaged. It needs the Command Code pull request in the layer set.
-      - name: Test the Command Code adapter
+      - name: Test the v2 Command Code adapter
         working-directory: apps/server
         run: |
           set -euo pipefail
-          if [[ " ${PR_REFS} " != *" refs/pull/10861/head "* ]]; then
-            echo "Pull request 10861 is not layered; skipping the Command Code adapter test."
-            exit 0
-          fi
-          vp test run src/provider/Layers/CommandCodeAdapter.test.ts
+          tests=(
+            src/orchestration-v2/Adapters/CommandCodeAdapterV2.test.ts
+            src/provider/commandCodeNdjson.test.ts
+            src/provider/commandCodeModels.test.ts
+          )
+          for test in "${tests[@]}"; do
+            [[ -f "$test" ]] || {
+              echo "::error::${test} is missing: the Command Code patch did not apply."
+              exit 1
+            }
+          done
+          # The workspace binary matches this tree's vite-plus; the globally
+          # installed vp version does not and fails every test file at import.
+          vp_bin=../node_modules/.bin/vp
+          [[ -x "$vp_bin" ]] || vp_bin=vp
+          "$vp_bin" test run "${tests[@]}"
 
       - name: Align package versions
         run: node scripts/update-release-package-versions.ts "${{ needs.resolve.outputs.version }}"
@@ -404,7 +399,7 @@ jobs:
             git reset --hard FETCH_HEAD
             git branch -M main
           fi
-          mkdir -p packaging/prs
+          mkdir -p packaging/v2
           printf '%s\n' "$KEY" > packaging/v2/last-built-key
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'

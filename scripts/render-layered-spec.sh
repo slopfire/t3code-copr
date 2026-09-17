@@ -28,7 +28,9 @@ if [[ ! -f "$template" ]]; then
   exit 66
 fi
 
-if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[0-9]+$ ]]; then
+# The stamp is upstream's `<date>.<time>`, or `<date>.<short commit>` for a
+# flavor that pins a commit instead of tracking a nightly tag.
+if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.([0-9]+|[0-9a-f]{4,})$ ]]; then
   echo "unsupported T3 Code nightly version: $version" >&2
   exit 64
 fi
