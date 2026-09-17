@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Render the RPM spec of a layered flavor from its template.
+# Render the RPM spec of a layered flavor from the shared template.
 #
 #   render-layered-spec.sh FLAVOR VERSION OUTPUT_SPEC PR_NUMBER [PR_NUMBER ...]
 #
-# FLAVOR selects the template, t3code-<flavor>-nightly.spec.in.
+# FLAVOR only selects the packaging notes: the spec template itself is shared
+# (t3code-layered-nightly.spec.in), because the flavors differ in what they
+# carry, not in how the package is laid out. Adding a flavor means adding a case
+# arm below, not copying a spec.
 set -euo pipefail
 
 if [[ $# -lt 4 ]]; then
@@ -17,14 +20,35 @@ output_spec="$3"
 shift 3
 pr_numbers=("$@")
 
-if [[ ! "$flavor" =~ ^[a-z0-9]+$ ]]; then
+# Hyphens are allowed inside a flavor name: the package is
+# t3code-<flavor>-nightly, so `v2-prs` becomes t3code-v2-prs-nightly.
+if [[ ! "$flavor" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
   echo "unsupported flavor: $flavor" >&2
   exit 64
 fi
 
-template="t3code-${flavor}-nightly.spec.in"
+case "$flavor" in
+  prs)
+    flavor_note="with upstream pull requests layered"
+    flavor_detail=" The pull request set leads with the Command Code provider."
+    ;;
+  v2)
+    flavor_note="with the new orchestrator and the Pi provider"
+    flavor_detail=" The pull request set is the unmerged orchestrator rewrite, which carries the Pi coding agent driver and the generic ACP provider registry, and no local patches are applied."
+    ;;
+  v2-prs)
+    flavor_note="with the new orchestrator, the Pi provider, and the Command Code and Oh My Pi integrations"
+    flavor_detail=" The pull request set is the unmerged orchestrator rewrite, and the local patches add the Command Code provider and the bundled Oh My Pi ACP registry entry, which main-side pull requests cannot supply because those drivers target main's adapter interface."
+    ;;
+  *)
+    echo "unknown flavor: $flavor" >&2
+    exit 64
+    ;;
+esac
+
+template="t3code-layered-nightly.spec.in"
 if [[ ! -f "$template" ]]; then
-  echo "no spec template for flavor $flavor: $template" >&2
+  echo "missing shared spec template: $template" >&2
   exit 66
 fi
 
@@ -51,11 +75,17 @@ changelog_date="$(date -u -d "$datestamp" '+%a %b %d %Y')"
 pr_set="$(IFS=.; echo "${pr_numbers[*]}")"
 pr_list="$(IFS=', '; echo "${pr_numbers[*]}")"
 
+# sed replacements, with the characters that would be special in a sed
+# replacement escaped: a flavor note is prose, not a pattern.
+escape() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
+
 mkdir -p "$(dirname "$output_spec")"
 sed \
-  -e "s/@FLAVOR@/$flavor/g" \
-  -e "s/@UPSTREAM_VERSION@/$version/g" \
-  -e "s/@PR_SET@/$pr_set/g" \
-  -e "s/@PR_LIST@/$pr_list/g" \
-  -e "s/@CHANGELOG_DATE@/$changelog_date/g" \
+  -e "s|@FLAVOR@|$(escape "$flavor")|g" \
+  -e "s|@UPSTREAM_VERSION@|$(escape "$version")|g" \
+  -e "s|@PR_SET@|$(escape "$pr_set")|g" \
+  -e "s|@PR_LIST@|$(escape "$pr_list")|g" \
+  -e "s|@FLAVOR_NOTE@|$(escape "$flavor_note")|g" \
+  -e "s|@FLAVOR_DETAIL@|$(escape "$flavor_detail")|g" \
+  -e "s|@CHANGELOG_DATE@|$(escape "$changelog_date")|g" \
   "$template" > "$output_spec"

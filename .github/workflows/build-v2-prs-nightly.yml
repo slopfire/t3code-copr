@@ -1,22 +1,24 @@
-name: Build T3 Code v2 orchestrator nightly
+name: Build T3 Code v2 orchestrator nightly with Command Code and Oh My Pi
 
 # Builds the v2 orchestrator branch (pull request #2829, which carries the Pi
 # provider and the generic ACP registry) from source, packages the resulting
-# x86_64 AppImage as `t3code-v2-nightly`, and submits it to the same COPR project
-# as the plain nightly.
+# x86_64 AppImage as `t3code-v2-prs-nightly`, and submits it to the same COPR
+# project as the plain nightly. This is the flavor with the ported providers:
+# `t3code-v2-nightly` is the clean build of the same branch, and both own the same
+# paths, so moving between them is a `dnf swap`.
 #
-# Unlike the prs flavor, this one does not merge its pull requests onto the
+# Like t3code-v2-nightly, this one does not merge its pull requests onto the
 # nightly tag. The branch is a rewrite of the orchestration layer that trails
 # main, so merging it onto a newer nightly conflicts as soon as main moves past
 # its base; the flavor therefore builds the branch head itself, which is the
 # revision its author tests. There is no nightly tag to track either: the version
-# and the build key come from that commit, and patches/v2/ carries what the
+# and the build key come from that commit, and patches/v2-prs/ carries what the
 # main-side pull requests cannot provide here (the Command Code provider and the
 # bundled Oh My Pi ACP entry, both written against the v2 interfaces).
 
 on:
   schedule:
-    - cron: "23 * * * *"
+    - cron: "33 * * * *"
   workflow_dispatch:
     inputs:
       force:
@@ -34,14 +36,14 @@ permissions:
   contents: write
 
 concurrency:
-  group: t3code-v2-nightly-copr
+  group: t3code-v2-prs-nightly-copr
   cancel-in-progress: false
 
 env:
   T3CODE_REPO: pingdotgg/t3code
   # Flavor selects the packaging notes, the desktop entry, and the patch
   # directory (patches/<flavor>); the spec template is shared.
-  FLAVOR: v2
+  FLAVOR: v2-prs
   # The layered pull requests, in merge order. A ref is `refs/pull/<number>/head`
   # and the number must be the pull request the AppImage is built from.
   PR_REFS: ${{ inputs.pr_refs || 'refs/pull/2829/head' }}
@@ -148,7 +150,7 @@ jobs:
           printf 'pr_spec=%s\n' "$pr_spec" >> "$GITHUB_OUTPUT"
           printf 'key=%s\n' "$key" >> "$GITHUB_OUTPUT"
 
-          last="$(cat packaging/v2/last-built-key 2>/dev/null || true)"
+          last="$(cat packaging/v2-prs/last-built-key 2>/dev/null || true)"
           if [[ "$FORCE" == "true" || "$key" != "$last" ]]; then
             echo "should_build=true" >> "$GITHUB_OUTPUT"
             echo "Will build (force=${FORCE} last=${last:-none})"
@@ -267,13 +269,9 @@ jobs:
           # Flavors without the ported patches have no such tests: the Command
           # Code adapter and the bundled Oh My Pi entry live in
           # t3code-v2-prs-nightly. Any other absence is a broken tree.
-          if [[ ! -f "${tests[0]}" ]]; then
-            echo "This flavor carries no ported provider patches; skipping."
-            exit 0
-          fi
           for test in "${tests[@]}"; do
             [[ -f "$test" ]] || {
-              echo "::error::${test} is missing while other ported tests are present."
+              echo "::error::${test} is missing: the ported Command Code patch did not apply."
               exit 1
             }
           done
@@ -311,7 +309,7 @@ jobs:
       - name: Upload the AppImage
         uses: actions/upload-artifact@v4
         with:
-          name: v2-appimage
+          name: v2-prs-appimage
           path: ${{ runner.temp }}/T3-Code-*.AppImage
           if-no-files-found: error
           retention-days: 14
@@ -339,7 +337,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
-          name: v2-appimage
+          name: v2-prs-appimage
           path: appimage
 
       # Archive the exact bytes the RPM carries before publishing anything that
@@ -350,11 +348,11 @@ jobs:
           VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           set -euo pipefail
-          tag="v2-nightly"
+          tag="v2-prs-nightly"
           if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" --prerelease \
-              --title 'T3 Code v2 orchestrator nightly AppImages' \
-              --notes 'Rolling prerelease holding the source-built AppImages that the t3code-v2-nightly RPM repackages.'
+              --title 'T3 Code v2 orchestrator nightly AppImages (with Command Code and Oh My Pi)' \
+              --notes 'Rolling prerelease holding the source-built AppImages that the t3code-v2-prs-nightly RPM repackages.'
           fi
           gh release upload "$tag" --repo "$GITHUB_REPOSITORY" \
             "appimage/T3-Code-${VERSION}-x86_64.AppImage" --clobber
@@ -372,7 +370,7 @@ jobs:
             pr_args+=("${entry%%:*}")
             pr_args+=("${entry#*:}")
           done
-          ./scripts/build-layered-srpm.sh v2 "$TAG" appimage/T3-Code-*.AppImage "${pr_args[@]}"
+          ./scripts/build-layered-srpm.sh v2-prs "$TAG" appimage/T3-Code-*.AppImage "${pr_args[@]}"
 
       - name: Configure COPR credentials
         env:
@@ -407,13 +405,13 @@ jobs:
             git branch -M main
           fi
           mkdir -p packaging/v2
-          printf '%s\n' "$KEY" > packaging/v2/last-built-key
+          printf '%s\n' "$KEY" > packaging/v2-prs/last-built-key
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add packaging/v2/last-built-key
+          git add packaging/v2-prs/last-built-key
           if git diff --cached --quiet; then
-            echo "v2 nightly $KEY is already recorded"
+            echo "v2-prs nightly $KEY is already recorded"
             exit 0
           fi
-          git commit -m "chore: record T3 Code v2 nightly $KEY"
+          git commit -m "chore: record T3 Code v2-prs nightly $KEY"
           git push

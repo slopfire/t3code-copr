@@ -1,6 +1,12 @@
 %global upstream_version @UPSTREAM_VERSION@
 %global pr_set @PR_SET@
 %global pr_list @PR_LIST@
+%global flavor @FLAVOR@
+# RPM release fields cannot contain a hyphen, so a hyphenated flavor name
+# lands as underscores there while the package keeps its real name.
+%global release_flavor %(echo %{flavor} | tr '-' '_')
+%global flavor_note @FLAVOR_NOTE@
+%global flavor_detail @FLAVOR_DETAIL@
 
 # The AppImage is a prebuilt opaque ELF bundle without a build ID.
 %global _build_id_links none
@@ -9,10 +15,10 @@
 %global __brp_strip_comment_note %{nil}
 %global __brp_strip_lto %{nil}
 
-Name:           t3code-prs-nightly
+Name:           t3code-%{flavor}-nightly
 Version:        %(echo %{upstream_version} | sed 's/-.*//')
-Release:        1.prs.%{pr_set}.%(echo %{upstream_version} | sed 's/.*-nightly\.//')%{?dist}
-Summary:        Minimal GUI for coding agents (nightly build with upstream pull requests layered)
+Release:        1.%{release_flavor}.%{pr_set}.%(echo %{upstream_version} | sed 's/.*-nightly\.//')%{?dist}
+Summary:        Minimal GUI for coding agents (nightly %{flavor_note})
 
 License:        MIT
 URL:            https://github.com/pingdotgg/t3code
@@ -23,12 +29,9 @@ Source3:        LICENSE
 Source4:        upstream-prs.txt
 ExclusiveArch:  x86_64
 
-# Installs over the plain nightly and over the retired Command Code package:
-# same paths, newer release, so dnf swaps either of them for this package
-# instead of erroring on file conflicts. All three track the same upstream
-# nightly, and this package's release always sorts above the plain nightly's
-# `0.nightly.*` and the Command Code package's `1.cmd.pr*`, so `<=` covers the
-# concurrent builds.
+# Every T3 Code package here owns the same paths, so dnf will not hold two of
+# them at once: switching flavors is an explicit `dnf swap`. The retired names
+# are obsoleted so their users land on a maintained package.
 Provides:       t3code = %{version}-%{release}
 Obsoletes:      t3code-nightly <= %{version}-%{release}
 Obsoletes:      t3code-cmd-nightly <= %{version}-%{release}
@@ -36,12 +39,12 @@ Obsoletes:      t3code-cmd-nightly <= %{version}-%{release}
 %description
 T3 Code is a minimal GUI for coding agents.
 
-This unofficial package is built from upstream nightly sources with the
-upstream pull requests %{pr_list} layered on top, followed by the local patches
-carried by this packaging repository. %{_docdir}/%{name}/upstream-prs.txt names
-every upstream commit and every local patch that went into the build. It is
-otherwise the same x86_64 nightly desktop build, so it replaces t3code-nightly
-and provides the same `t3code` entry point.
+This unofficial package is built from upstream sources with the upstream pull
+requests %{pr_list} layered on top, followed by the local patches carried by this
+packaging repository.%{flavor_detail}
+%{_docdir}/%{name}/upstream-prs.txt names every upstream commit, local patch, and
+conflict carry that went into the build. It is otherwise the same x86_64 nightly
+desktop build and provides the same `t3code` entry point.
 
 %prep
 %autosetup -c -T

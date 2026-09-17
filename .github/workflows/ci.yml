@@ -31,6 +31,9 @@ jobs:
           ./scripts/render-layered-spec.sh v2 \
             v0.0.29-nightly.20260712.791 /tmp/t3code-v2-nightly.spec 2829
           rpmspec --parse /tmp/t3code-v2-nightly.spec >/dev/null
+          ./scripts/render-layered-spec.sh v2-prs \
+            v0.0.29-nightly.20260712.791 /tmp/t3code-v2-prs-nightly.spec 2829
+          rpmspec --parse /tmp/t3code-v2-prs-nightly.spec >/dev/null
       - name: Check shell scripts
         run: bash -n scripts/*.sh packaging/t3code
       - name: Check the recorded conflict resolutions

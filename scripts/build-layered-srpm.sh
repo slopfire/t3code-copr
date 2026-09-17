@@ -19,12 +19,14 @@ shift 3
 pairs=("$@")
 version="${tag#v}"
 
-if [[ ! "$flavor" =~ ^[a-z0-9]+$ ]]; then
+if [[ ! "$flavor" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
   echo "unsupported flavor: $flavor" >&2
   exit 64
 fi
 
-template="t3code-${flavor}-nightly.spec.in"
+# One shared template: flavors differ in what they carry (see the packaging
+# notes in render-layered-spec.sh), not in how the package is laid out.
+template="t3code-layered-nightly.spec.in"
 desktop="packaging/t3code-${flavor}.desktop"
 for file in "$template" "$desktop"; do
   if [[ ! -f "$file" ]]; then
