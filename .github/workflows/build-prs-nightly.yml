@@ -114,7 +114,7 @@ jobs:
           printf 'pr_spec=%s\n' "$pr_spec" >> "$GITHUB_OUTPUT"
           printf 'key=%s\n' "$key" >> "$GITHUB_OUTPUT"
 
-          last="$(cat packaging/prs/last-built-key 2>/dev/null || true)"
+          last="$(cat "packaging/${FLAVOR}/last-built-key" 2>/dev/null || true)"
           if [[ "$FORCE" == "true" || "$key" != "$last" ]]; then
             echo "should_build=true" >> "$GITHUB_OUTPUT"
             echo "Will build (force=${FORCE} last=${last:-none})"
@@ -398,11 +398,11 @@ jobs:
             git reset --hard FETCH_HEAD
             git branch -M main
           fi
-          mkdir -p packaging/prs
-          printf '%s\n' "$KEY" > packaging/prs/last-built-key
+          mkdir -p "packaging/${FLAVOR}"
+          printf '%s\n' "$KEY" > "packaging/${FLAVOR}/last-built-key"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add packaging/prs/last-built-key
+          git add "packaging/${FLAVOR}/last-built-key"
           if git diff --cached --quiet; then
             echo "prs nightly $KEY is already recorded"
             exit 0
