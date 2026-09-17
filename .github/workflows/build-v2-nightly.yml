@@ -1,14 +1,14 @@
-name: Build T3 Code + pull requests nightly
+name: Build T3 Code v2 orchestrator nightly
 
-# Builds the upstream nightly from source with a set of upstream pull requests
-# layered on top, packages the resulting x86_64 AppImage as `t3code-prs-nightly`,
-# and submits it to the same COPR project as the plain nightly. The plain nightly
-# repackages an official AppImage; this one has to compile, because no upstream
-# artifact contains a pull request.
+# Builds the upstream nightly from source with the v2 orchestrator pull request
+# (which carries the Pi provider) layered on top, packages the resulting x86_64
+# AppImage as `t3code-v2-nightly`, and submits it to the same COPR project as the
+# plain nightly. The plain nightly repackages an official AppImage; this one has
+# to compile, because no upstream artifact contains a pull request.
 
 on:
   schedule:
-    - cron: "47 * * * *"
+    - cron: "23 * * * *"
   workflow_dispatch:
     inputs:
       force:
@@ -19,21 +19,21 @@ on:
       pr_refs:
         description: Space separated upstream pull request refs to layer, in merge order
         required: false
-        default: refs/pull/10861/head refs/pull/11973/head
+        default: refs/pull/10861/head refs/pull/2829/head
         type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: t3code-prs-nightly-copr
+  group: t3code-v2-nightly-copr
   cancel-in-progress: false
 
 env:
   T3CODE_REPO: pingdotgg/t3code
   # The layered pull requests, in merge order. A ref is `refs/pull/<number>/head`
   # and the number must be the pull request the AppImage is built from.
-  PR_REFS: ${{ inputs.pr_refs || 'refs/pull/10861/head refs/pull/11973/head' }}
+  PR_REFS: ${{ inputs.pr_refs || 'refs/pull/10861/head refs/pull/2829/head' }}
   # The public identifiers upstream bakes into official builds (see its
   # .env.example). Not secrets: they only enable T3 Connect against the public
   # production deployment, and without them the app builds with cloud disabled.
@@ -100,7 +100,7 @@ jobs:
           printf 'pr_spec=%s\n' "$pr_spec" >> "$GITHUB_OUTPUT"
           printf 'key=%s\n' "$key" >> "$GITHUB_OUTPUT"
 
-          last="$(cat packaging/prs/last-built-key 2>/dev/null || true)"
+          last="$(cat packaging/v2/last-built-key 2>/dev/null || true)"
           if [[ "$FORCE" == "true" || "$key" != "$last" ]]; then
             echo "should_build=true" >> "$GITHUB_OUTPUT"
             echo "Will build (force=${FORCE} last=${last:-none})"
@@ -150,7 +150,7 @@ jobs:
           PR_SPEC: ${{ needs.resolve.outputs.pr_spec }}
         run: |
           set -euo pipefail
-          git config user.name 't3code-prs-nightly'
+          git config user.name 't3code-v2-nightly'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           for ref in ${PR_REFS}; do
             number="${ref#refs/pull/}"
@@ -289,7 +289,7 @@ jobs:
       - name: Upload the AppImage
         uses: actions/upload-artifact@v4
         with:
-          name: prs-appimage
+          name: v2-appimage
           path: ${{ runner.temp }}/T3-Code-*.AppImage
           if-no-files-found: error
           retention-days: 14
@@ -317,7 +317,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
-          name: prs-appimage
+          name: v2-appimage
           path: appimage
 
       # Archive the exact bytes the RPM carries before publishing anything that
@@ -328,11 +328,11 @@ jobs:
           VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           set -euo pipefail
-          tag="prs-nightly"
+          tag="v2-nightly"
           if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" --prerelease \
-              --title 'T3 Code + pull requests nightly AppImages' \
-              --notes 'Rolling prerelease holding the source-built AppImages that the t3code-prs-nightly RPM repackages.'
+              --title 'T3 Code v2 orchestrator nightly AppImages' \
+              --notes 'Rolling prerelease holding the source-built AppImages that the t3code-v2-nightly RPM repackages.'
           fi
           gh release upload "$tag" --repo "$GITHUB_REPOSITORY" \
             "appimage/T3-Code-${VERSION}-x86_64.AppImage" --clobber
@@ -350,7 +350,7 @@ jobs:
             pr_args+=("${entry%%:*}")
             pr_args+=("${entry#*:}")
           done
-          ./scripts/build-layered-srpm.sh prs "$TAG" appimage/T3-Code-*.AppImage "${pr_args[@]}"
+          ./scripts/build-layered-srpm.sh v2 "$TAG" appimage/T3-Code-*.AppImage "${pr_args[@]}"
 
       - name: Configure COPR credentials
         env:
@@ -385,13 +385,13 @@ jobs:
             git branch -M main
           fi
           mkdir -p packaging/prs
-          printf '%s\n' "$KEY" > packaging/prs/last-built-key
+          printf '%s\n' "$KEY" > packaging/v2/last-built-key
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add packaging/prs/last-built-key
+          git add packaging/v2/last-built-key
           if git diff --cached --quiet; then
-            echo "prs nightly $KEY is already recorded"
+            echo "v2 nightly $KEY is already recorded"
             exit 0
           fi
-          git commit -m "chore: record T3 Code prs nightly $KEY"
+          git commit -m "chore: record T3 Code v2 nightly $KEY"
           git push

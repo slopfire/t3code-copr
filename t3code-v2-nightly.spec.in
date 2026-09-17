@@ -1,0 +1,80 @@
+%global upstream_version @UPSTREAM_VERSION@
+%global flavor @FLAVOR@
+%global pr_set @PR_SET@
+%global pr_list @PR_LIST@
+
+# The AppImage is a prebuilt opaque ELF bundle without a build ID.
+%global _build_id_links none
+%global debug_package %{nil}
+%global __brp_strip %{nil}
+%global __brp_strip_comment_note %{nil}
+%global __brp_strip_lto %{nil}
+
+Name:           t3code-%{flavor}-nightly
+Version:        %(echo %{upstream_version} | sed 's/-.*//')
+Release:        1.%{flavor}.%{pr_set}.%(echo %{upstream_version} | sed 's/.*-nightly\.//')%{?dist}
+Summary:        Minimal GUI for coding agents (nightly with the new orchestrator and the Pi provider)
+
+License:        MIT
+URL:            https://github.com/pingdotgg/t3code
+Source0:        T3-Code-%{upstream_version}-x86_64.AppImage
+Source1:        t3code
+Source2:        t3code.desktop
+Source3:        LICENSE
+Source4:        upstream-prs.txt
+ExclusiveArch:  x86_64
+
+# Same paths as the other T3 Code packages, newer release, so dnf swaps the
+# retired names for this one instead of erroring on file conflicts. The prs
+# flavor is a separate package on purpose: dnf will not hold this one and
+# t3code-prs-nightly at once, so switching between them is an explicit swap.
+Provides:       t3code = %{version}-%{release}
+Obsoletes:      t3code-nightly <= %{version}-%{release}
+Obsoletes:      t3code-cmd-nightly <= %{version}-%{release}
+
+%description
+T3 Code is a minimal GUI for coding agents.
+
+This unofficial package is built from upstream nightly sources with the
+upstream pull requests %{pr_list} layered on top, followed by the local patches
+carried by this packaging repository. The pull request set leads with the new
+orchestrator, and it carries the Pi coding agent driver plus the generic ACP
+provider registry; the Oh My Pi driver stays in the t3code-prs-nightly package.
+%{_docdir}/%{name}/upstream-prs.txt names every upstream commit, local patch,
+and conflict carry that went into the build.
+
+%prep
+%autosetup -c -T
+
+%install
+install -Dpm0755 %{SOURCE0} %{buildroot}%{_libexecdir}/t3code/t3code.AppImage
+install -Dpm0755 %{SOURCE1} %{buildroot}%{_bindir}/t3code
+install -Dpm0644 %{SOURCE2} %{buildroot}%{_datadir}/applications/t3code.desktop
+install -Dpm0644 %{SOURCE3} %{buildroot}%{_licensedir}/%{name}/LICENSE
+install -Dpm0644 %{SOURCE4} %{buildroot}%{_docdir}/%{name}/upstream-prs.txt
+
+# Install application icons from the AppImage (FUSE-free extract).
+extractdir="%{_builddir}/%{name}-icons"
+mkdir -p "$extractdir"
+(
+  cd "$extractdir"
+  %{buildroot}%{_libexecdir}/t3code/t3code.AppImage --appimage-extract \
+    'usr/share/icons/hicolor/*/apps/t3code.png'
+)
+for icon in "$extractdir"/squashfs-root/usr/share/icons/hicolor/*/apps/t3code.png; do
+  size="$(basename "$(dirname "$(dirname "$icon")")")"
+  install -Dpm0644 "$icon" \
+    "%{buildroot}%{_datadir}/icons/hicolor/${size}/apps/t3code.png"
+done
+
+%files
+%license %{_licensedir}/%{name}/LICENSE
+%doc %{_docdir}/%{name}/upstream-prs.txt
+%{_bindir}/t3code
+%{_libexecdir}/t3code/t3code.AppImage
+%{_datadir}/applications/t3code.desktop
+%{_datadir}/icons/hicolor/*/apps/t3code.png
+
+%changelog
+* @CHANGELOG_DATE@ T3 Code COPR Maintainers <copr@example.invalid> - %{version}-%{release}
+- Package upstream nightly %{upstream_version} with pull requests %{pr_list}
