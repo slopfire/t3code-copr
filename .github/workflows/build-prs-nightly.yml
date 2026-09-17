@@ -116,16 +116,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
+      # The whole object store has to be present: the merge reads the merge-base
+      # blobs, and a sparse checkout makes actions/checkout fetch with
+      # `--filter=blob:none`, whose promisor fetch by object id fails for
+      # revisions the pull requests carry.
       - name: Checkout upstream at the nightly tag
         uses: actions/checkout@v5
         with:
           repository: ${{ env.T3CODE_REPO }}
           ref: ${{ needs.resolve.outputs.tag }}
           fetch-depth: 0
-          sparse-checkout: |
-            /*
-            !/.repos/
-          sparse-checkout-cone-mode: false
 
       # This job checks out upstream, so the layer files that live in this
       # repository (patches/, resolutions/) are fetched by API rather than
@@ -172,6 +172,13 @@ jobs:
             # resolutions/<number>/, and the recorded hashes prove both sides
             # are still the revisions that resolution was written against.
             resolutions="$RUNNER_TEMP/layers/resolutions/${number}"
+            # A merge that fails before it records its parents did not produce
+            # conflicts to resolve (a missing object, a refused ref), so the
+            # resolutions below would paper over an unfinished merge.
+            if [[ ! -f "$(git rev-parse --git-path MERGE_HEAD)" ]]; then
+              echo "::error::Merging ${ref} failed before it produced a conflict. Read the git output above; nothing was committed."
+              exit 1
+            fi
             if [[ ! -f "${resolutions}/conflicts.tsv" ]]; then
               echo "::error::${ref} does not merge onto ${TAG} and resolutions/${number}/conflicts.tsv is missing."
               exit 1

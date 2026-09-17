@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(gh:*)",
+      "Shell(copr-cli:*)",
+      "Shell(grep:*)",
+      "Shell(./scripts/resolve-latest-nightly.sh:*)"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  }
+}
