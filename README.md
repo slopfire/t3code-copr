@@ -16,10 +16,11 @@ RPM packages for the x86_64 T3 Code desktop nightly:
   generic ACP provider registry, so this is the flavor that ships Pi. It is an
   experimental package: it ships an orchestrator upstream has not merged, so keep
   it apart from your daily install until you have exercised it.
-  The Command Code (#10861) and Oh My Pi (#11973) drivers cannot ride along: both
-  implement main's `adapter` field, and the v2 orchestrator requires
-  `orchestrationAdapter` with its own `*AdapterV2` implementations. Those two
-  stay in `t3code-prs-nightly`.
+  The Command Code (#10861) and Oh My Pi (#11973) drivers cannot ride along from
+  those pull requests: both implement main's `adapter` field, and the v2
+  orchestrator requires `orchestrationAdapter`, so the v2 flavor carries its own
+  ported integrations in `patches/v2/` — Command Code as a full provider and Oh
+  My Pi as a bundled ACP Registry entry.
 
 Upstream publishes no AppImage containing an open pull request, so the two
 layered flavors are compiled from source in GitHub Actions and packaged the same
@@ -83,15 +84,24 @@ install"), so they are intentionally ignored. Tag selection lives in
 AppImage is built, and the build key includes a digest of them, so editing a
 patch triggers a rebuild. Each patch must apply cleanly to the layered tree; if
 upstream changes the file it touches, the workflow fails instead of quietly
-shipping something else. The v2 flavor has no patch directory: nothing in it is
-patched yet.
+shipping something else.
+
+The v2 flavor carries its own patches because the v2 interfaces are not main's:
+main's drivers expose `adapter`, the v2 orchestrator requires
+`orchestrationAdapter`, so the Command Code and Oh My Pi integrations cannot be
+taken from #10861 / #11973 and are written against the v2 branch instead. They
+are local patches, not pull requests, because they target an unmerged branch and
+would have to be rewritten as it moves.
 
 | Patch | Why |
 | --- | --- |
 | `patches/prs/0001-command-code-steer-on-mid-turn-send.patch` | PR #10861 rejects any `sendTurn` that arrives while a turn is running (`a turn is already running for this thread`), so a message typed mid-turn is dropped; it also reports a signal-killed child (Stop) as a provider process failure. The patch steers the message into the running turn, keeps Stop a clean abort, and names any mid-turn messages a turn ends up never delivering. |
+| `patches/v2/0001-acp-bundled-oh-my-pi-entry.patch` | Oh My Pi is ACP-native but its official ACP Registry entry is still pending, so the Registry flow cannot offer it. The patch ships the entry with the app (`bundledAcpAgents.ts`) and merges bundled entries behind fetched ones, so the official listing takes over automatically once it is published. |
+| `patches/v2/0002-command-code-provider.patch` | The Command Code provider, ported to the v2 interfaces: driver, `CommandCodeAdapterV2`, NDJSON protocol, model catalog, snapshot, text generation, contracts schema, and the settings-UI definition. Mid-turn sends are steered into the running turn by the v2 orchestrator (`supportsActiveSteering`), with the queueing implemented in the adapter because the CLI takes one prompt per process. |
 
-The patch is not upstreamed: once the pull request (or an equivalent change)
-carries the fix, delete the patch file and this section.
+A patch is not upstreamed here: once the pull request (or an equivalent change)
+carries the fix, or the v2 branch merges into main, delete the patch file and its
+row.
 
 ## Conflict resolutions
 
