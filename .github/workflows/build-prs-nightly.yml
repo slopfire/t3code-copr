@@ -31,6 +31,9 @@ concurrency:
 
 env:
   T3CODE_REPO: pingdotgg/t3code
+  # Flavor selects the spec template (t3code-<flavor>-nightly), the desktop
+  # entry, and the patch directory (patches/<flavor>).
+  FLAVOR: prs
   # The layered pull requests, in merge order. A ref is `refs/pull/<number>/head`
   # and the number must be the pull request the AppImage is built from.
   PR_REFS: ${{ inputs.pr_refs || 'refs/pull/10861/head refs/pull/11973/head' }}
@@ -87,9 +90,20 @@ jobs:
 
           # Local patches and conflict resolutions ride on top of the pull
           # requests, so the key has to move when they change; otherwise a fixed
-          # patch or resolution never rebuilds.
-          layer_digest="$(find patches resolutions -type f -print0 | sort -z \
-            | xargs -0 -r cat | sha256sum | cut -c1-12)"
+          # patch or resolution never rebuilds. Only this flavor's own patch
+          # directory and the resolutions of its pull requests count.
+          layer_paths=()
+          [[ -d "patches/${FLAVOR}" ]] && layer_paths+=("patches/${FLAVOR}")
+          for entry in ${pr_spec}; do
+            number="${entry%%:*}"
+            [[ -d "resolutions/${number}" ]] && layer_paths+=("resolutions/${number}")
+          done
+          if [[ ${#layer_paths[@]} -eq 0 ]]; then
+            layer_digest="none"
+          else
+            layer_digest="$(find "${layer_paths[@]}" -type f -print0 | sort -z \
+              | xargs -0 -r cat | sha256sum | cut -c1-12)"
+          fi
           key="${tag}${sha_key}+p${layer_digest}"
           echo "Resolved upstream nightly: $tag"
           echo "Pull requests: ${pr_spec}"
@@ -211,7 +225,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          patches=("$RUNNER_TEMP"/layers/patches/*.patch)
+          patches=("$RUNNER_TEMP"/layers/patches/"${FLAVOR}"/*.patch)
           if [ ${#patches[@]} -eq 0 ]; then
             echo "No local patches to apply."
             exit 0

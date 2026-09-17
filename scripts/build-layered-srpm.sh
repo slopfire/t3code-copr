@@ -82,12 +82,12 @@ install -pm0644 packaging/LICENSE "$topdir/SOURCES/LICENSE"
   done
 } > "$topdir/SOURCES/upstream-prs.txt"
 
-# The AppImage also carries the local patches from patches/ and, for pull
-# requests that do not merge onto the nightly tag, the resolved files from
+# The AppImage also carries the local patches from patches/<flavor>/ and, for
+# pull requests that do not merge onto the nightly tag, the resolved files from
 # resolutions/. The provenance file has to name them; otherwise it claims a
 # pure pull-request build.
 shopt -s nullglob
-for patch in patches/*.patch; do
+for patch in "patches/${flavor}"/*.patch; do
   printf 'Local patch:      %s (sha256 %s)\n' \
     "$(basename "$patch")" "$(sha256sum "$patch" | cut -d' ' -f1)" \
     >> "$topdir/SOURCES/upstream-prs.txt"

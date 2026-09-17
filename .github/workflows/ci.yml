@@ -29,7 +29,7 @@ jobs:
             v0.0.29-nightly.20260712.791 /tmp/t3code-prs-nightly.spec 10861 11973
           rpmspec --parse /tmp/t3code-prs-nightly.spec >/dev/null
           ./scripts/render-layered-spec.sh v2 \
-            v0.0.29-nightly.20260712.791 /tmp/t3code-v2-nightly.spec 10861 2829
+            v0.0.29-nightly.20260712.791 /tmp/t3code-v2-nightly.spec 2829
           rpmspec --parse /tmp/t3code-v2-nightly.spec >/dev/null
       - name: Check shell scripts
         run: bash -n scripts/*.sh packaging/t3code

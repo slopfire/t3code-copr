@@ -12,16 +12,20 @@ RPM packages for the x86_64 T3 Code desktop nightly:
   Oh My Pi driver).
 - **`t3code-v2-nightly`** layers
   [pingdotgg/t3code#2829](https://github.com/pingdotgg/t3code/pull/2829) (the
-  new orchestrator) on top of #10861. That stack carries the **Pi** coding agent
-  driver and the generic ACP provider registry. It is an experimental package:
-  it ships an orchestrator that upstream has not merged, so keep it apart from
-  your daily install until you have exercised it.
+  new orchestrator). That stack carries the **Pi** coding agent driver and the
+  generic ACP provider registry, so this is the flavor that ships Pi. It is an
+  experimental package: it ships an orchestrator upstream has not merged, so keep
+  it apart from your daily install until you have exercised it.
+  The Command Code (#10861) and Oh My Pi (#11973) drivers cannot ride along: both
+  implement main's `adapter` field, and the v2 orchestrator requires
+  `orchestrationAdapter` with its own `*AdapterV2` implementations. Those two
+  stay in `t3code-prs-nightly`.
 
 Upstream publishes no AppImage containing an open pull request, so the two
 layered flavors are compiled from source in GitHub Actions and packaged the same
-way afterwards. Local fixes from `patches/` are applied after the pull requests,
-and pull requests that do not merge onto the nightly tag need the resolved files
-in `resolutions/`; see [Local patches](#local-patches) and
+way afterwards. Local fixes from `patches/<flavor>/` are applied after the pull
+requests, and pull requests that do not merge onto the nightly tag need the
+resolved files in `resolutions/`; see [Local patches](#local-patches) and
 [Conflict resolutions](#conflict-resolutions).
 
 Both layered flavors install the same files as `t3code-nightly` and carry
@@ -49,8 +53,8 @@ explicit `dnf swap`.
      submits the `t3code-nightly` source RPM only when it sees a new tag. It
      records the successful submission in `packaging/last-built-tag`.
    - `Build T3 Code v2 orchestrator nightly` (:23) compiles the nightly with
-     #10861 and #2829, archives the AppImage on the `v2-nightly` prerelease, and
-     submits the `t3code-v2-nightly` source RPM. It records the combination in
+     #2829, archives the AppImage on the `v2-nightly` prerelease, and submits the
+     `t3code-v2-nightly` source RPM. It records the combination in
      `packaging/v2/last-built-key`.
    - `Build T3 Code + pull requests nightly` (:47) compiles the nightly with
      #10861 and #11973, archives the AppImage on the `prs-nightly` prerelease,
@@ -75,15 +79,16 @@ install"), so they are intentionally ignored. Tag selection lives in
 
 ## Local patches
 
-`patches/*.patch` are applied after the pull requests and before the AppImage is
-built, and the build key includes a digest of them, so editing a patch triggers
-a rebuild. Each patch must apply cleanly to the layered tree; if upstream
-changes the file it touches, the workflow fails instead of quietly shipping
-something else.
+`patches/<flavor>/*.patch` are applied after the pull requests and before the
+AppImage is built, and the build key includes a digest of them, so editing a
+patch triggers a rebuild. Each patch must apply cleanly to the layered tree; if
+upstream changes the file it touches, the workflow fails instead of quietly
+shipping something else. The v2 flavor has no patch directory: nothing in it is
+patched yet.
 
 | Patch | Why |
 | --- | --- |
-| `0001-command-code-steer-on-mid-turn-send.patch` | PR #10861 rejects any `sendTurn` that arrives while a turn is running (`a turn is already running for this thread`), so a message typed mid-turn is dropped; it also reports a signal-killed child (Stop) as a provider process failure. The patch steers the message into the running turn, keeps Stop a clean abort, and names any mid-turn messages a turn ends up never delivering. |
+| `patches/prs/0001-command-code-steer-on-mid-turn-send.patch` | PR #10861 rejects any `sendTurn` that arrives while a turn is running (`a turn is already running for this thread`), so a message typed mid-turn is dropped; it also reports a signal-killed child (Stop) as a provider process failure. The patch steers the message into the running turn, keeps Stop a clean abort, and names any mid-turn messages a turn ends up never delivering. |
 
 The patch is not upstreamed: once the pull request (or an equivalent change)
 carries the fix, delete the patch file and this section.
@@ -114,8 +119,9 @@ the conflicted files, then record both sides' hashes and the resolved files here
 | --- | --- |
 | `resolutions/11973/apps/server/src/provider/acp/AcpSessionRuntime.ts` | PR #11973 replaces the combined start/session check with an adopted-session-id path, while the nightly added an assistant-updates guard in the same place. The resolution keeps the pull request's adoption block first, so a `/fresh` session change is never dropped, then the nightly's guard. |
 | `resolutions/11973/apps/desktop/scripts/ensure-electron-runtime.mjs` | PR #11973 adds the Windows extraction branch next to the line the nightly changed. The resolution keeps the nightly's `distDir` variable and the pull request's branch. |
-| `resolutions/2829/apps/server/src/provider/builtInDrivers.ts` | The v2 stack adds the Pi and ACP-registry drivers where #10861 adds the Command Code driver. The resolution keeps all three. |
-| `resolutions/2829/apps/web/src/components/{chat/providerIconUtils,settings/providerDriverMeta}.ts` and `resolutions/2829/apps/mobile/src/lib/modelOptions.ts` | The v2 stack replaces the per-provider hardcoded icon, settings-form, and label tables with a data-driven provider registry, so #10861's additions to those tables no longer apply. The resolution takes the v2 stack's files. |
+
+A flavor reads only the resolutions of the pull requests it layers, so the v2
+flavor needs none: #2829 merges onto the nightly tag on its own.
 
 The resolutions are not upstreamed: once a pull request merges on its own, its
 resolution is never read and can be deleted with its directory.
@@ -141,7 +147,7 @@ disk:
 
 ./scripts/build-layered-srpm.sh v2 v0.0.29-nightly.20260712.791 \
   T3-Code-0.0.29-nightly.20260712.791-x86_64.AppImage \
-  10861 <pr-10861-sha> 2829 <pr-2829-sha>
+  2829 <pr-2829-sha>
 ```
 
 That AppImage has to come from the pull requests, the patches in `patches/`, and

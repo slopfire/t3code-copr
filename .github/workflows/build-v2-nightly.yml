@@ -1,10 +1,16 @@
 name: Build T3 Code v2 orchestrator nightly
 
 # Builds the upstream nightly from source with the v2 orchestrator pull request
-# (which carries the Pi provider) layered on top, packages the resulting x86_64
-# AppImage as `t3code-v2-nightly`, and submits it to the same COPR project as the
-# plain nightly. The plain nightly repackages an official AppImage; this one has
-# to compile, because no upstream artifact contains a pull request.
+# (#2829, which carries the Pi provider and the generic ACP registry) layered on
+# top, packages the resulting x86_64 AppImage as `t3code-v2-nightly`, and submits
+# it to the same COPR project as the plain nightly. The plain nightly repackages
+# an official AppImage; this one has to compile, because no upstream artifact
+# contains a pull request.
+#
+# The Command Code (#10861) and Oh My Pi (#11973) drivers cannot ride along: both
+# implement main's `adapter` field, and the v2 orchestrator requires
+# `orchestrationAdapter` with its own `*AdapterV2` implementations. They stay in
+# the t3code-prs-nightly flavor.
 
 on:
   schedule:
@@ -19,7 +25,7 @@ on:
       pr_refs:
         description: Space separated upstream pull request refs to layer, in merge order
         required: false
-        default: refs/pull/10861/head refs/pull/2829/head
+        default: refs/pull/2829/head
         type: string
 
 permissions:
@@ -31,9 +37,12 @@ concurrency:
 
 env:
   T3CODE_REPO: pingdotgg/t3code
+  # Flavor selects the spec template (t3code-<flavor>-nightly), the desktop
+  # entry, and the patch directory (patches/<flavor>).
+  FLAVOR: v2
   # The layered pull requests, in merge order. A ref is `refs/pull/<number>/head`
   # and the number must be the pull request the AppImage is built from.
-  PR_REFS: ${{ inputs.pr_refs || 'refs/pull/10861/head refs/pull/2829/head' }}
+  PR_REFS: ${{ inputs.pr_refs || 'refs/pull/2829/head' }}
   # The public identifiers upstream bakes into official builds (see its
   # .env.example). Not secrets: they only enable T3 Connect against the public
   # production deployment, and without them the app builds with cloud disabled.
@@ -87,9 +96,20 @@ jobs:
 
           # Local patches and conflict resolutions ride on top of the pull
           # requests, so the key has to move when they change; otherwise a fixed
-          # patch or resolution never rebuilds.
-          layer_digest="$(find patches resolutions -type f -print0 | sort -z \
-            | xargs -0 -r cat | sha256sum | cut -c1-12)"
+          # patch or resolution never rebuilds. Only this flavor's own patch
+          # directory and the resolutions of its pull requests count.
+          layer_paths=()
+          [[ -d "patches/${FLAVOR}" ]] && layer_paths+=("patches/${FLAVOR}")
+          for entry in ${pr_spec}; do
+            number="${entry%%:*}"
+            [[ -d "resolutions/${number}" ]] && layer_paths+=("resolutions/${number}")
+          done
+          if [[ ${#layer_paths[@]} -eq 0 ]]; then
+            layer_digest="none"
+          else
+            layer_digest="$(find "${layer_paths[@]}" -type f -print0 | sort -z \
+              | xargs -0 -r cat | sha256sum | cut -c1-12)"
+          fi
           key="${tag}${sha_key}+p${layer_digest}"
           echo "Resolved upstream nightly: $tag"
           echo "Pull requests: ${pr_spec}"
@@ -211,7 +231,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          patches=("$RUNNER_TEMP"/layers/patches/*.patch)
+          patches=("$RUNNER_TEMP"/layers/patches/"${FLAVOR}"/*.patch)
           if [ ${#patches[@]} -eq 0 ]; then
             echo "No local patches to apply."
             exit 0
