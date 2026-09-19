@@ -1,4 +1,4 @@
-# Base: v2 orchestrator stack (pingdotgg/t3code refs/pull/2829/head) commit 1ee1d0464271295d7b389cff343c5862caf31afa
+# Base: v2 orchestrator stack (pingdotgg/t3code refs/pull/2829/head) commit 5ff0a9368a630ac5ecb75078e6b1e1051bba2872
 # Applies after 0001-acp-bundled-oh-my-pi-entry.patch.
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slopfire <hgrmeanwhile@gmail.com>
@@ -3415,7 +3415,7 @@ index 53908510c..ae900cd2d 100644
  
  const PROVIDER_CLIENT_DEFINITION_BY_VALUE: Partial<
 diff --git a/packages/contracts/src/model.ts b/packages/contracts/src/model.ts
-index f0ccc47d4..a0dcfda85 100644
+index 8154693a0..d96853e0d 100644
 --- a/packages/contracts/src/model.ts
 +++ b/packages/contracts/src/model.ts
 @@ -222,6 +222,7 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
@@ -3427,10 +3427,10 @@ index f0ccc47d4..a0dcfda85 100644
    [CLAUDE_DRIVER_KIND]: "Claude",
    [CURSOR_DRIVER_KIND]: "Cursor",
 diff --git a/packages/contracts/src/settings.ts b/packages/contracts/src/settings.ts
-index 70d27736f..58aec6abd 100644
+index fd341e7ff..b61e54bde 100644
 --- a/packages/contracts/src/settings.ts
 +++ b/packages/contracts/src/settings.ts
-@@ -942,6 +942,72 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
+@@ -944,6 +944,72 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
  );
  export type OpenCodeSettings = typeof OpenCodeSettings.Type;
  
@@ -3503,7 +3503,7 @@ index 70d27736f..58aec6abd 100644
  /**
   * A read-only quota source outside this environment's provider CLIs. The
   * only kind today is a CLIProxyAPI hub, whose management API reports the
-@@ -1245,6 +1311,7 @@ export const ServerSettings = Schema.Struct({
+@@ -1288,6 +1354,7 @@ export const ServerSettings = Schema.Struct({
      pi: PiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
      opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
      antigravity: AntigravitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
@@ -3511,7 +3511,7 @@ index 70d27736f..58aec6abd 100644
    }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
    // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
    // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
-@@ -1426,6 +1493,14 @@ const OpenCodeSettingsPatch = Schema.Struct({
+@@ -1469,6 +1536,14 @@ const OpenCodeSettingsPatch = Schema.Struct({
    customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
  });
  
@@ -3524,9 +3524,9 @@ index 70d27736f..58aec6abd 100644
 +});
 +
  export const ServerSettingsPatch = Schema.Struct({
-   // Server settings
-   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
-@@ -1501,6 +1576,7 @@ export const ServerSettingsPatch = Schema.Struct({
+   worktreeCleanup: Schema.optionalKey(
+     Schema.NullOr(
+@@ -1571,6 +1646,7 @@ export const ServerSettingsPatch = Schema.Struct({
        pi: Schema.optionalKey(PiSettingsPatch),
        opencode: Schema.optionalKey(OpenCodeSettingsPatch),
        antigravity: Schema.optionalKey(AntigravitySettingsPatch),

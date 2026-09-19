@@ -138,7 +138,6 @@ the conflicted files, then record both sides' hashes and the resolved files here
 
 | Resolution | Why |
 | --- | --- |
-| `resolutions/11973/apps/server/src/provider/acp/AcpSessionRuntime.ts` | PR #11973 replaces the combined start/session check with an adopted-session-id path, while the nightly added an assistant-updates guard in the same place. The resolution keeps the pull request's adoption block first, so a `/fresh` session change is never dropped, then the nightly's guard. |
 | `resolutions/11973/apps/desktop/scripts/ensure-electron-runtime.mjs` | PR #11973 adds the Windows extraction branch next to the line the nightly changed. The resolution keeps the nightly's `distDir` variable and the pull request's branch. |
 
 A flavor reads only the resolutions of the pull requests it layers, so neither v2

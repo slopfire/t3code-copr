@@ -1,4 +1,4 @@
-# Base: v2 orchestrator stack (pingdotgg/t3code refs/pull/2829/head) commit 1ee1d0464271295d7b389cff343c5862caf31afa
+# Base: v2 orchestrator stack (pingdotgg/t3code refs/pull/2829/head) commit 5ff0a9368a630ac5ecb75078e6b1e1051bba2872
 # Applies on top of the pinned commit that t3code-v2-nightly builds.
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slopfire <hgrmeanwhile@gmail.com>
