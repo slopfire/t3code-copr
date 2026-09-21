@@ -396,22 +396,4 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Container checkouts can be source archives without a .git directory.
-          if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-            git init
-            git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-            git fetch --depth=1 origin main
-            git reset --hard FETCH_HEAD
-            git branch -M main
-          fi
-          mkdir -p "packaging/${FLAVOR}"
-          printf '%s\n' "$KEY" > "packaging/${FLAVOR}/last-built-key"
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add "packaging/${FLAVOR}/last-built-key"
-          if git diff --cached --quiet; then
-            echo "v2-prs nightly $KEY is already recorded"
-            exit 0
-          fi
-          git commit -m "chore: record T3 Code v2-prs nightly $KEY"
-          git push
+          ./scripts/record-last-built-key.sh "$FLAVOR" "$KEY"
