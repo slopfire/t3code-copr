@@ -3402,18 +3402,19 @@ index 53908510c..ae900cd2d 100644
    CursorSettings,
    GrokSettings,
    OpenCodeSettings,
-@@ -99,6 +100,11 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
-     label: "Antigravity",
-     settingsSchema: AntigravitySettings,
+@@ -91,6 +92,11 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
+     label: "Pi",
+     badgeLabel: "Early Access",
+     settingsSchema: PiSettings,
    },
 +  {
 +    value: ProviderDriverKind.make("commandCode"),
 +    label: "Command Code",
 +    settingsSchema: CommandCodeSettings,
 +  },
- ];
- 
- const PROVIDER_CLIENT_DEFINITION_BY_VALUE: Partial<
+   {
+     value: ProviderDriverKind.make("acpRegistry"),
+
 diff --git a/packages/contracts/src/model.ts b/packages/contracts/src/model.ts
 index 8154693a0..d96853e0d 100644
 --- a/packages/contracts/src/model.ts
