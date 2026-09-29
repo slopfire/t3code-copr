@@ -139,6 +139,10 @@ the conflicted files, then record both sides' hashes and the resolved files here
 | Resolution | Why |
 | --- | --- |
 | `resolutions/11973/apps/desktop/scripts/ensure-electron-runtime.mjs` | PR #11973 adds the Windows extraction branch next to the line the nightly changed. The resolution keeps the nightly's `distDir` variable and the pull request's branch. |
+| `resolutions/11973/apps/server/src/provider/acp/AcpSessionRuntime.ts` | The 20260926 nightlies touch `AcpSessionRuntime.ts` where PR #11973 adds `adoptedSessionIdsRef` next to the nightly's `shownToolCallIds`. The resolution keeps both declarations. |
+| `resolutions/11973/apps/web/src/components/onboarding/WelcomeWizard.tsx` | The nightly reorders the onboarding agents (Codex first) where PR #11973 appends the `omp` driver. The resolution keeps the nightly's order and appends `omp`. |
+| `resolutions/11973/apps/web/src/components/settings/AddProviderInstanceDialog.tsx` | The nightly adds the ChatGPT connection import above the Icons import that PR #11973 rewrites to drop the removed Pi agent icon. The resolution keeps both changes. |
+| `resolutions/11973/docs/user/install.md` | The nightly rewrites the Codex row (ChatGPT connect) in the providers table where PR #11973 adds an Oh My Pi row. The resolution keeps the nightly's Codex row and inserts the Oh My Pi row. |
 
 A flavor reads only the resolutions of the pull requests it layers, so neither v2
 flavor needs any: they build the orchestrator branch head directly instead of
