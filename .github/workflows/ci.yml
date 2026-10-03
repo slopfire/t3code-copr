@@ -17,7 +17,7 @@ jobs:
         shell: bash
     steps:
       - name: Install Git for checkout
-        run: dnf --assumeyes install git
+        run: dnf --assumeyes install git curl jq
       - uses: actions/checkout@v5
       - name: Install RPM tooling
         run: dnf --assumeyes install rpm-build rpmdevtools
