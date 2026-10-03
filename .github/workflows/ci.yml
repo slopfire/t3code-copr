@@ -50,7 +50,7 @@ jobs:
           shopt -s nullglob
           for patch_dir in patches/*/; do
             flavor="$(basename "$patch_dir")"
-            patches=("${patch_dir%/}"/*.patch)
+            patches=("$GITHUB_WORKSPACE/${patch_dir%/}"/*.patch)
             if [ ${#patches[@]} -eq 0 ]; then
               continue
             fi
