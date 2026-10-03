@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # Build the source RPM of a layered flavor.
 #
-#   build-layered-srpm.sh FLAVOR TAG APPIMAGE PR_NUMBER PR_SHA [PR_NUMBER PR_SHA ...]
+#   build-layered-srpm.sh FLAVOR TAG APPIMAGE [PR_NUMBER PR_SHA ...]
 #
 # FLAVOR selects the spec template (t3code-<flavor>-nightly.spec.in) and the
-# desktop entry (packaging/t3code-<flavor>.desktop).
+# desktop entry (packaging/t3code-<flavor>.desktop). The pull-request pairs are
+# optional: a flavor that layers none just omits them.
 set -euo pipefail
 
-if [[ $# -lt 5 || $(( ($# - 3) % 2 )) -ne 0 ]]; then
-  echo "usage: $0 FLAVOR TAG APPIMAGE PR_NUMBER PR_SHA [PR_NUMBER PR_SHA ...]" >&2
+if [[ $# -lt 3 || $(( ($# - 3) % 2 )) -ne 0 ]]; then
+  echo "usage: $0 FLAVOR TAG APPIMAGE [PR_NUMBER PR_SHA ...]" >&2
   exit 64
 fi
 
@@ -49,20 +50,22 @@ fi
 
 pr_numbers=()
 pr_shas=()
-for ((index = 0; index < ${#pairs[@]}; index += 2)); do
-  number="${pairs[index]}"
-  sha="${pairs[index + 1]}"
-  if [[ ! "$number" =~ ^[0-9]+$ ]]; then
-    echo "unsupported pull request number: $number" >&2
-    exit 64
-  fi
-  if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
-    echo "unsupported pull request commit: $sha" >&2
-    exit 64
-  fi
-  pr_numbers+=("$number")
-  pr_shas+=("$sha")
-done
+if (( ${#pairs[@]} > 0 )); then
+  for ((index = 0; index < ${#pairs[@]}; index += 2)); do
+    number="${pairs[index]}"
+    sha="${pairs[index + 1]}"
+    if [[ ! "$number" =~ ^[0-9]+$ ]]; then
+      echo "unsupported pull request number: $number" >&2
+      exit 64
+    fi
+    if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+      echo "unsupported pull request commit: $sha" >&2
+      exit 64
+    fi
+    pr_numbers+=("$number")
+    pr_shas+=("$sha")
+  done
+fi
 
 topdir="$PWD/rpmbuild"
 mkdir -p "$topdir"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
@@ -78,13 +81,17 @@ install -pm0644 packaging/LICENSE "$topdir/SOURCES/LICENSE"
   echo "Base nightly tag: ${tag}"
   echo "AppImage built:   $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   echo
-  echo "Layered upstream pull requests, in merge order:"
-  for ((index = 0; index < ${#pr_numbers[@]}; index++)); do
-    printf '  #%s https://github.com/pingdotgg/t3code/pull/%s\n' \
-      "${pr_numbers[index]}" "${pr_numbers[index]}"
-    printf '     head commit %s\n' "${pr_shas[index]}"
-  done
-} > "$topdir/SOURCES/upstream-prs.txt"
+  if (( ${#pr_numbers[@]} > 0 )); then
+    echo "Layered upstream pull requests, in merge order:"
+    for ((index = 0; index < ${#pr_numbers[@]}; index++)); do
+      printf '  #%s https://github.com/pingdotgg/t3code/pull/%s\n' \
+        "${pr_numbers[index]}" "${pr_numbers[index]}"
+      printf '     head commit %s\n' "${pr_shas[index]}"
+    done
+  else
+    echo "Layered upstream pull requests: none"
+  fi
+} > "$topdir/SOURCES/build-provenance.txt"
 
 # The AppImage also carries the local patches from patches/<flavor>/ and, for
 # pull requests that do not merge onto the nightly tag, the resolved files from
@@ -94,13 +101,13 @@ shopt -s nullglob
 for patch in "patches/${flavor}"/*.patch; do
   printf 'Local patch:      %s (sha256 %s)\n' \
     "$(basename "$patch")" "$(sha256sum "$patch" | cut -d' ' -f1)" \
-    >> "$topdir/SOURCES/upstream-prs.txt"
+    >> "$topdir/SOURCES/build-provenance.txt"
 done
 for ((index = 0; index < ${#pr_numbers[@]}; index++)); do
   manifest="resolutions/${pr_numbers[index]}/conflicts.tsv"
   if [[ -f "$manifest" ]]; then
     printf 'Conflict carry:   %s\n' "$manifest" \
-      >> "$topdir/SOURCES/upstream-prs.txt"
+      >> "$topdir/SOURCES/build-provenance.txt"
   fi
 done
 

@@ -1,4 +1,4 @@
-# Base: v2 orchestrator stack (pingdotgg/t3code refs/pull/2829/head) commit 5ff0a9368a630ac5ecb75078e6b1e1051bba2872
+# Base: pingdotgg/t3code main post-#2829 (nightly v0.0.46-nightly.20261003.2623).
 # Applies after 0001-acp-bundled-oh-my-pi-entry.patch.
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slopfire <hgrmeanwhile@gmail.com>
@@ -3402,9 +3402,9 @@ index 53908510c..ae900cd2d 100644
    CursorSettings,
    GrokSettings,
    OpenCodeSettings,
-@@ -91,6 +92,11 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
+@@ -90,6 +91,11 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
+     value: ProviderDriverKind.make("pi"),
      label: "Pi",
-     badgeLabel: "Early Access",
      settingsSchema: PiSettings,
    },
 +  {

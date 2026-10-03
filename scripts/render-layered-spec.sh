@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Render the RPM spec of a layered flavor from the shared template.
 #
-#   render-layered-spec.sh FLAVOR VERSION OUTPUT_SPEC PR_NUMBER [PR_NUMBER ...]
+#   render-layered-spec.sh FLAVOR VERSION OUTPUT_SPEC [PR_NUMBER ...]
 #
 # FLAVOR only selects the packaging notes: the spec template itself is shared
 # (t3code-layered-nightly.spec.in), because the flavors differ in what they
@@ -9,8 +9,8 @@
 # arm below, not copying a spec.
 set -euo pipefail
 
-if [[ $# -lt 4 ]]; then
-  echo "usage: $0 FLAVOR VERSION OUTPUT_SPEC PR_NUMBER [PR_NUMBER ...]" >&2
+if [[ $# -lt 3 ]]; then
+  echo "usage: $0 FLAVOR VERSION OUTPUT_SPEC [PR_NUMBER ...]" >&2
   exit 64
 fi
 
@@ -28,17 +28,13 @@ if [[ ! "$flavor" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
 fi
 
 case "$flavor" in
-  prs)
-    flavor_note="with upstream pull requests layered"
-    flavor_detail=" The pull request set leads with the Command Code provider."
-    ;;
   v2)
-    flavor_note="with the new orchestrator and the Pi provider"
-    flavor_detail=" The pull request set is the unmerged orchestrator rewrite, which carries the Pi coding agent driver and the generic ACP provider registry, and no local patches are applied."
+    flavor_note="with the Pi provider"
+    flavor_detail=" The Pi coding agent driver and the generic ACP provider registry came with the orchestrator when upstream merged it, and this clean source build carries no local patches."
     ;;
   v2-prs)
-    flavor_note="with the new orchestrator, the Pi provider, and the Command Code and Oh My Pi integrations"
-    flavor_detail=" The pull request set is the unmerged orchestrator rewrite, and the local patches add the Command Code provider and the bundled Oh My Pi ACP registry entry, which main-side pull requests cannot supply because those drivers target main's adapter interface."
+    flavor_note="with the Pi provider and the Command Code and Oh My Pi integrations"
+    flavor_detail=" The local patches from the packaging repository add the Command Code provider and the bundled Oh My Pi ACP registry entry, written against the orchestration interfaces that upstream main has carried since it merged the orchestrator."
     ;;
   *)
     echo "unknown flavor: $flavor" >&2
@@ -70,10 +66,13 @@ datestamp="${version##*-nightly.}"
 datestamp="${datestamp%%.*}"
 changelog_date="$(date -u -d "$datestamp" '+%a %b %d %Y')"
 
-# `pr_set` lands in the RPM release and must stay a plain dot-separated list;
-# `pr_list` lands in the summary text and description.
-pr_set="$(IFS=.; echo "${pr_numbers[*]}")"
-pr_list="$(IFS=', '; echo "${pr_numbers[*]}")"
+# `pr_set` lands in the RPM release and must stay a plain dot-separated list.
+# A flavor that layers no pull requests records `none`, so the release still
+# moves if the set ever comes back.
+pr_set="none"
+if (( ${#pr_numbers[@]} > 0 )); then
+  pr_set="$(IFS=.; echo "${pr_numbers[*]}")"
+fi
 
 # sed replacements, with the characters that would be special in a sed
 # replacement escaped: a flavor note is prose, not a pattern.
@@ -84,7 +83,6 @@ sed \
   -e "s|@FLAVOR@|$(escape "$flavor")|g" \
   -e "s|@UPSTREAM_VERSION@|$(escape "$version")|g" \
   -e "s|@PR_SET@|$(escape "$pr_set")|g" \
-  -e "s|@PR_LIST@|$(escape "$pr_list")|g" \
   -e "s|@FLAVOR_NOTE@|$(escape "$flavor_note")|g" \
   -e "s|@FLAVOR_DETAIL@|$(escape "$flavor_detail")|g" \
   -e "s|@CHANGELOG_DATE@|$(escape "$changelog_date")|g" \

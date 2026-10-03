@@ -23,34 +23,38 @@ jobs:
         run: dnf --assumeyes install rpm-build rpmdevtools
       - name: Render and validate the RPM specs
         run: |
-          ./scripts/render-spec.sh v0.0.29-nightly.20260712.791 /tmp/t3code-nightly.spec
+          ./scripts/render-spec.sh v0.0.46-nightly.20261003.2610 /tmp/t3code-nightly.spec
           rpmspec --parse /tmp/t3code-nightly.spec >/dev/null
-          ./scripts/render-layered-spec.sh prs \
-            v0.0.29-nightly.20260712.791 /tmp/t3code-prs-nightly.spec 10861 11973
-          rpmspec --parse /tmp/t3code-prs-nightly.spec >/dev/null
           ./scripts/render-layered-spec.sh v2 \
-            v0.0.29-nightly.20260712.791 /tmp/t3code-v2-nightly.spec 2829
+            v0.0.46-nightly.20261003.2610 /tmp/t3code-v2-nightly.spec
           rpmspec --parse /tmp/t3code-v2-nightly.spec >/dev/null
           ./scripts/render-layered-spec.sh v2-prs \
-            v0.0.29-nightly.20260712.791 /tmp/t3code-v2-prs-nightly.spec 2829
+            v0.0.46-nightly.20261003.2610 /tmp/t3code-v2-prs-nightly.spec
           rpmspec --parse /tmp/t3code-v2-prs-nightly.spec >/dev/null
       - name: Check shell scripts
         run: bash -n scripts/*.sh packaging/t3code
-      - name: Check the recorded conflict resolutions
+      - name: Check the patch set applies to the latest nightly
+        if: hashFiles('patches/**') != ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # Every patch must apply to the upstream nightly tree it is layered
+          # on, so a stale patch fails packaging CI instead of the COPR build
+          # hours later. The touched flavors' patch directories are replayed
+          # against the newest nightly tag in order.
+          tag="$(./scripts/resolve-latest-nightly.sh)"
+          scratch="$(mktemp -d)"
+          git clone --quiet --no-checkout "https://github.com/${T3CODE_REPO:-pingdotgg/t3code}" "$scratch/upstream"
+          git -C "$scratch/upstream" checkout --quiet "$tag"
           shopt -s nullglob
-          for manifest in resolutions/*/conflicts.tsv; do
-            directory="$(dirname "$manifest")"
-            while read -r head_hash pr_hash path; do
-              [[ -n "$path" ]] || continue
-              if [[ ! -f "${directory}/${path}" ]]; then
-                echo "::error::${manifest} names ${path}, which is missing."
-                exit 1
-              fi
-              if grep -q '^<<<<<<< \|^>>>>>>>' "${directory}/${path}"; then
-                echo "::error::${directory}/${path} still holds conflict markers."
-                exit 1
-              fi
-            done < "$manifest"
+          for patch_dir in patches/*/; do
+            flavor="$(basename "$patch_dir")"
+            patches=("${patch_dir%/}"/*.patch)
+            if [ ${#patches[@]} -eq 0 ]; then
+              continue
+            fi
+            echo "Checking ${#patches[@]} patch(es) of ${flavor} against ${tag}"
+            git -C "$scratch/upstream" apply --check "${patches[@]}"
           done
+          rm -rf "$scratch"

@@ -1,20 +1,13 @@
 name: Build T3 Code v2 orchestrator nightly with Command Code and Oh My Pi
 
-# Builds the v2 orchestrator branch (pull request #2829, which carries the Pi
-# provider and the generic ACP registry) from source, packages the resulting
-# x86_64 AppImage as `t3code-v2-prs-nightly`, and submits it to the same COPR
-# project as the plain nightly. This is the flavor with the ported providers:
-# `t3code-v2-nightly` is the clean build of the same branch, and both own the same
-# paths, so moving between them is a `dnf swap`.
-#
-# Like t3code-v2-nightly, this one does not merge its pull requests onto the
-# nightly tag. The branch is a rewrite of the orchestration layer that trails
-# main, so merging it onto a newer nightly conflicts as soon as main moves past
-# its base; the flavor therefore builds the branch head itself, which is the
-# revision its author tests. There is no nightly tag to track either: the version
-# and the build key come from that commit, and patches/v2-prs/ carries what the
-# main-side pull requests cannot provide here (the Command Code provider and the
-# bundled Oh My Pi ACP entry, both written against the v2 interfaces).
+# Builds the upstream nightly from source with `patches/v2-prs/` applied,
+# packages the resulting x86_64 AppImage as `t3code-v2-prs-nightly`, and
+# submits it to the same COPR project as the plain nightly. The patches carry
+# the ported providers: the Command Code provider and the bundled Oh My Pi ACP
+# registry entry, both written against the orchestration interfaces that
+# upstream main has carried since it merged the orchestrator (pull request
+# #2829) on 2026-10-02. `t3code-v2-nightly` is the clean build of the same
+# tag, and both own the same paths, so moving between them is a `dnf swap`.
 
 on:
   schedule:
@@ -22,15 +15,10 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: Build even if this nightly tag and pull request revisions were already recorded
+        description: Build even if this nightly tag and patch set were already recorded
         required: false
         default: false
         type: boolean
-      pr_refs:
-        description: Space separated upstream pull request refs to layer, in merge order
-        required: false
-        default: refs/pull/2829/head
-        type: string
 
 permissions:
   contents: write
@@ -41,12 +29,9 @@ concurrency:
 
 env:
   T3CODE_REPO: pingdotgg/t3code
-  # Flavor selects the packaging notes, the desktop entry, and the patch
-  # directory (patches/<flavor>); the spec template is shared.
+  # Flavor selects the spec template (t3code-<flavor>-nightly), the desktop
+  # entry, and the patch directory (patches/<flavor>).
   FLAVOR: v2-prs
-  # The layered pull requests, in merge order. A ref is `refs/pull/<number>/head`
-  # and the number must be the pull request the AppImage is built from.
-  PR_REFS: ${{ inputs.pr_refs || 'refs/pull/2829/head' }}
   # The public identifiers upstream bakes into official builds (see its
   # .env.example). Not secrets: they only enable T3 Connect against the public
   # production deployment, and without them the app builds with cloud disabled.
@@ -57,16 +42,12 @@ env:
 
 jobs:
   resolve:
-    name: Resolve the upstream nightly and the pull request revisions
+    name: Resolve the upstream nightly
     runs-on: ubuntu-latest
     outputs:
       should_build: ${{ steps.release.outputs.should_build }}
       tag: ${{ steps.release.outputs.tag }}
-      # The pinned orchestrator commit this build is made from.
-      sha: ${{ steps.release.outputs.sha }}
       version: ${{ steps.release.outputs.version }}
-      # `10861:<sha> 11973:<sha>`, in merge order.
-      pr_spec: ${{ steps.release.outputs.pr_spec }}
       key: ${{ steps.release.outputs.key }}
     steps:
       - uses: actions/checkout@v5
@@ -81,73 +62,22 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # No nightly tag here: this flavor's source is the branch head the pull
-          # requests resolve to. The synthetic tag below keeps the spec renderer's
-          # interface intact and moves only when that commit does.
-          tag=""
-          version=""
+          tag="$(./scripts/resolve-latest-nightly.sh)"
+          version="${tag#v}"
 
-          pr_spec=""
-          sha_key=""
-          for ref in ${PR_REFS}; do
-            number="${ref#refs/pull/}"
-            number="${number%/head}"
-            if [[ ! "$number" =~ ^[0-9]+$ ]]; then
-              echo "Unsupported pull request ref: ${ref}" >&2
-              exit 1
-            fi
-            sha="$(gh api "repos/${T3CODE_REPO}/pulls/${number}" --jq '.head.sha')"
-            test -n "$sha" || { echo "Could not resolve PR ${number}." >&2; exit 1; }
-            pr_spec+="${pr_spec:+ }${number}:${sha}"
-            sha_key+="+${sha}"
-          done
-          test -n "$pr_spec" || { echo "No pull requests to layer." >&2; exit 1; }
-          # The first ref is this flavor's source: the orchestrator branch head.
-          sha="${pr_spec%% *}"
-          sha="${sha#*:}"
-          # The base version still comes from upstream's latest nightly, so the
-          # package version stays recognisable. The stamp and the build key come
-          # from the pinned commit instead, which is what this flavor tracks.
-          base="$(./scripts/resolve-latest-nightly.sh)"
-          base_version="${base#v}"
-          base_version="${base_version%%-nightly.*}"
-          test -n "$base_version" || {
-            echo "Could not read the base version out of ${base}." >&2
-            exit 1
-          }
-          committed="$(gh api "repos/${T3CODE_REPO}/commits/${sha}" --jq '.commit.committer.date')"
-          test -n "$committed" || { echo "Could not read the commit date of ${sha}." >&2; exit 1; }
-          stamp="${committed:0:4}${committed:5:2}${committed:8:2}.${sha:0:12}"
-          version="${base_version}-nightly.${stamp}"
-          tag="v${version}"
-          echo "Pinned source: ${sha} (${tag}, base version from ${base})"
-
-          # Local patches and conflict resolutions ride on top of the pull
-          # requests, so the key has to move when they change; otherwise a fixed
-          # patch or resolution never rebuilds. Only this flavor's own patch
-          # directory and the resolutions of its pull requests count.
-          layer_paths=()
-          [[ -d "patches/${FLAVOR}" ]] && layer_paths+=("patches/${FLAVOR}")
-          for entry in ${pr_spec}; do
-            number="${entry%%:*}"
-            [[ -d "resolutions/${number}" ]] && layer_paths+=("resolutions/${number}")
-          done
-          if [[ ${#layer_paths[@]} -eq 0 ]]; then
-            layer_digest="none"
-          else
-            layer_digest="$(find "${layer_paths[@]}" -type f -print0 | sort -z \
+          # The local patches ride on top of the nightly tree, so the key has
+          # to move when they change; otherwise a fixed patch never rebuilds.
+          layer_digest=none
+          if compgen -G "patches/${FLAVOR}/*.patch" >/dev/null; then
+            layer_digest="$(find "patches/${FLAVOR}" -type f -print0 | sort -z \
               | xargs -0 -r cat | sha256sum | cut -c1-12)"
           fi
-          # The key holds the base version, the pinned commit, and the layer
-          # digest: an upstream nightly stamp alone must not trigger a rebuild.
-          key="v${base_version}${sha_key}+p${layer_digest}"
-          echo "Pull requests: ${pr_spec}"
-          echo "Layer digest: p${layer_digest}"
+          key="${tag}+p${layer_digest}"
+          echo "Resolved upstream nightly: $tag"
+          echo "Patch digest: p${layer_digest}"
 
           printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
-          printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
-          printf 'pr_spec=%s\n' "$pr_spec" >> "$GITHUB_OUTPUT"
           printf 'key=%s\n' "$key" >> "$GITHUB_OUTPUT"
 
           last="$(cat "packaging/${FLAVOR}/last-built-key" 2>/dev/null || true)"
@@ -160,27 +90,27 @@ jobs:
           fi
 
   build:
-    name: Build the layered AppImage
+    name: Build the patched AppImage
     needs: resolve
     if: needs.resolve.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      # The pinned branch head. Full history keeps the checkout honest about the
-      # commit it claims to build; a sparse checkout would make actions/checkout
-      # fetch with `--filter=blob:none`, whose promisor fetch by object id fails
-      # for revisions the branch carries.
-      - name: Checkout the pinned orchestrator commit
+      # The whole object store has to be present: any later step that checks out
+      # another revision (or a future layering step) reads blobs by object id,
+      # and a sparse checkout's `--filter=blob:none` promisor fetch by object id
+      # fails for revisions the tree does not carry.
+      - name: Checkout upstream at the nightly tag
         uses: actions/checkout@v5
         with:
           repository: ${{ env.T3CODE_REPO }}
-          ref: ${{ needs.resolve.outputs.sha }}
+          ref: ${{ needs.resolve.outputs.tag }}
           fetch-depth: 0
 
       # This job checks out upstream, so the layer files that live in this
-      # repository (patches/, resolutions/) are fetched by API rather than
-      # checked out into the build tree.
-      - name: Fetch the layer files
+      # repository (patches/) are fetched by API rather than checked out into
+      # the build tree.
+      - name: Fetch the patch files
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -191,27 +121,20 @@ jobs:
             --header 'Accept: application/vnd.github+json' \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/tarball/${{ github.sha }}" \
             | tar --extract --gzip --strip-components=1 --directory "$RUNNER_TEMP/layers"
-          ls -R "$RUNNER_TEMP/layers/patches" "$RUNNER_TEMP/layers/resolutions" 2>/dev/null || true
+          ls -R "$RUNNER_TEMP/layers/patches" 2>/dev/null || true
 
-      - name: Confirm the pinned orchestrator commit
+      - name: Confirm the checkout
         env:
-          SHA: ${{ needs.resolve.outputs.sha }}
-          PR_SPEC: ${{ needs.resolve.outputs.pr_spec }}
+          TAG: ${{ needs.resolve.outputs.tag }}
         run: |
           set -euo pipefail
-          checked_out="$(git rev-parse HEAD)"
-          echo "Pinned commit: ${checked_out}"
-          test "$checked_out" = "$SHA" || {
-            echo "::error::Checked out ${checked_out}, expected ${SHA}."
-            exit 1
-          }
-          # A wrong ref would otherwise build a tree that quietly lacks the
-          # orchestrator and the providers this flavor exists for.
+          echo "Checked out tag: ${TAG} at $(git rev-parse HEAD)"
+          # A wrong ref would otherwise build a tree without the orchestrator
+          # the ported patches are written against.
           test -f apps/server/src/orchestration-v2/ProviderAdapter.ts || {
-            echo "::error::${SHA} is not the v2 orchestrator stack: orchestration-v2/ProviderAdapter.ts is missing."
+            echo "::error::${TAG} is not the v2 orchestrator stack: orchestration-v2/ProviderAdapter.ts is missing."
             exit 1
           }
-          echo "Source pull requests: ${PR_SPEC}"
 
       - name: Apply local patches
         run: |
@@ -219,13 +142,13 @@ jobs:
           shopt -s nullglob
           patches=("$RUNNER_TEMP"/layers/patches/"${FLAVOR}"/*.patch)
           if [ ${#patches[@]} -eq 0 ]; then
-            echo "No local patches to apply."
-            exit 0
+            echo "::error::patches/${FLAVOR}/ carries no patches; the flavor exists for them."
+            exit 1
           fi
           for patch in "${patches[@]}"; do
             echo "Applying $(basename "${patch}")"
             if ! git apply --verbose "${patch}"; then
-              echo "::error::Could not apply $(basename "${patch}"); the pull requests changed the files it touches."
+              echo "::error::Could not apply $(basename "${patch}"); the nightly changed the files it touches. Rebase the patch and refresh its context."
               exit 1
             fi
           done
@@ -255,9 +178,9 @@ jobs:
             --filter=@t3tools/scripts...
 
       # The patches are the only part of this build upstream CI never sees, so
-      # the focused test of the adapter they touch runs here before anything is
-      # packaged. It needs the Command Code pull request in the layer set.
-      - name: Test the v2 Command Code adapter
+      # the focused tests of the adapters they touch run here before anything
+      # is packaged.
+      - name: Test the ported adapters
         working-directory: apps/server
         run: |
           set -euo pipefail
@@ -266,9 +189,6 @@ jobs:
             src/provider/commandCodeNdjson.test.ts
             src/provider/commandCodeModels.test.ts
           )
-          # Flavors without the ported patches have no such tests: the Command
-          # Code adapter and the bundled Oh My Pi entry live in
-          # t3code-v2-prs-nightly. Any other absence is a broken tree.
           for test in "${tests[@]}"; do
             [[ -f "$test" ]] || {
               echo "::error::${test} is missing: the ported Command Code patch did not apply."
@@ -359,18 +279,13 @@ jobs:
 
       - name: Build source RPM
         env:
-          PR_SPEC: ${{ needs.resolve.outputs.pr_spec }}
           TAG: ${{ needs.resolve.outputs.tag }}
         run: |
           set -euo pipefail
-          # `10861:<sha> 11973:<sha>` becomes the positional number/sha pairs
-          # build-prs-srpm.sh records in the provenance file.
-          pr_args=()
-          for entry in ${PR_SPEC}; do
-            pr_args+=("${entry%%:*}")
-            pr_args+=("${entry#*:}")
-          done
-          ./scripts/build-layered-srpm.sh v2-prs "$TAG" appimage/T3-Code-*.AppImage "${pr_args[@]}"
+          # No pull requests are layered, so no positional number/sha pairs are
+          # passed to build-layered-srpm.sh; the provenance file records the
+          # local patches instead.
+          ./scripts/build-layered-srpm.sh v2-prs "$TAG" appimage/T3-Code-*.AppImage
 
       - name: Configure COPR credentials
         env:

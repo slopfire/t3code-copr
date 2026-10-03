@@ -1,6 +1,5 @@
 %global upstream_version @UPSTREAM_VERSION@
 %global pr_set @PR_SET@
-%global pr_list @PR_LIST@
 %global flavor @FLAVOR@
 # RPM release fields cannot contain a hyphen, so a hyphenated flavor name
 # lands as underscores there while the package keeps its real name.
@@ -26,7 +25,7 @@ Source0:        T3-Code-%{upstream_version}-x86_64.AppImage
 Source1:        t3code
 Source2:        t3code.desktop
 Source3:        LICENSE
-Source4:        upstream-prs.txt
+Source4:        build-provenance.txt
 ExclusiveArch:  x86_64
 
 # Every T3 Code package here owns the same paths, so dnf will not hold two of
@@ -35,16 +34,16 @@ ExclusiveArch:  x86_64
 Provides:       t3code = %{version}-%{release}
 Obsoletes:      t3code-nightly <= %{version}-%{release}
 Obsoletes:      t3code-cmd-nightly <= %{version}-%{release}
+Obsoletes:      t3code-prs-nightly <= %{version}-%{release}
 
 %description
 T3 Code is a minimal GUI for coding agents.
 
-This unofficial package is built from upstream sources with the upstream pull
-requests %{pr_list} layered on top, followed by the local patches carried by this
-packaging repository.%{flavor_detail}
-%{_docdir}/%{name}/upstream-prs.txt names every upstream commit, local patch, and
-conflict carry that went into the build. It is otherwise the same x86_64 nightly
-desktop build and provides the same `t3code` entry point.
+This unofficial package is built from the upstream sources of nightly
+%{upstream_version}.%{flavor_detail}
+%{_docdir}/%{name}/build-provenance.txt names every source input that went into
+the build. It is otherwise the same x86_64 nightly desktop build and provides
+the same `t3code` entry point.
 
 %prep
 %autosetup -c -T
@@ -54,7 +53,7 @@ install -Dpm0755 %{SOURCE0} %{buildroot}%{_libexecdir}/t3code/t3code.AppImage
 install -Dpm0755 %{SOURCE1} %{buildroot}%{_bindir}/t3code
 install -Dpm0644 %{SOURCE2} %{buildroot}%{_datadir}/applications/t3code.desktop
 install -Dpm0644 %{SOURCE3} %{buildroot}%{_licensedir}/%{name}/LICENSE
-install -Dpm0644 %{SOURCE4} %{buildroot}%{_docdir}/%{name}/upstream-prs.txt
+install -Dpm0644 %{SOURCE4} %{buildroot}%{_docdir}/%{name}/build-provenance.txt
 
 # Install application icons from the AppImage (FUSE-free extract).
 extractdir="%{_builddir}/%{name}-icons"
@@ -72,7 +71,7 @@ done
 
 %files
 %license %{_licensedir}/%{name}/LICENSE
-%doc %{_docdir}/%{name}/upstream-prs.txt
+%doc %{_docdir}/%{name}/build-provenance.txt
 %{_bindir}/t3code
 %{_libexecdir}/t3code/t3code.AppImage
 %{_datadir}/applications/t3code.desktop
@@ -80,4 +79,4 @@ done
 
 %changelog
 * @CHANGELOG_DATE@ T3 Code COPR Maintainers <copr@example.invalid> - %{version}-%{release}
-- Package upstream nightly %{upstream_version} with pull requests %{pr_list}
+- Package upstream nightly %{upstream_version} rebuilt with this repository's local patches
