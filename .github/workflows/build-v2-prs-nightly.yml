@@ -6,8 +6,9 @@ name: Build T3 Code v2 orchestrator nightly with Command Code and Oh My Pi
 # the ported providers: the Command Code provider and the bundled Oh My Pi ACP
 # registry entry, both written against the orchestration interfaces that
 # upstream main has carried since it merged the orchestrator (pull request
-# #2829) on 2026-10-02. `t3code-v2-nightly` is the clean build of the same
-# tag, and both own the same paths, so moving between them is a `dnf swap`.
+# #2829) on 2026-10-02. The clean `t3code-v2-nightly` flavor was retired when
+# that merge made a patchless source rebuild redundant; this package obsoletes
+# it, so its users move over on `dnf upgrade`.
 
 on:
   schedule:
@@ -15,7 +16,8 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: Build even if this nightly tag and patch set were already recorded
+        description: >-
+          Build even if this nightly tag and patch set were already recorded
         required: false
         default: false
         type: boolean
@@ -119,8 +121,10 @@ jobs:
           curl --fail --silent --show-error --location \
             --header "Authorization: Bearer ${GH_TOKEN}" \
             --header 'Accept: application/vnd.github+json' \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/tarball/${{ github.sha }}" \
-            | tar --extract --gzip --strip-components=1 --directory "$RUNNER_TEMP/layers"
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/tarball/\
+            ${{ github.sha }}" \
+            | tar --extract --gzip --strip-components=1 \
+            --directory "$RUNNER_TEMP/layers"
           ls -R "$RUNNER_TEMP/layers/patches" 2>/dev/null || true
 
       - name: Confirm the checkout
@@ -132,7 +136,8 @@ jobs:
           # A wrong ref would otherwise build a tree without the orchestrator
           # the ported patches are written against.
           test -f apps/server/src/orchestration-v2/ProviderAdapter.ts || {
-            echo "::error::${TAG} is not the v2 orchestrator stack: orchestration-v2/ProviderAdapter.ts is missing."
+            echo "::error::${TAG} is not the v2 orchestrator stack:"
+            echo "::error::orchestration-v2/ProviderAdapter.ts is missing."
             exit 1
           }
 
@@ -142,13 +147,16 @@ jobs:
           shopt -s nullglob
           patches=("$RUNNER_TEMP"/layers/patches/"${FLAVOR}"/*.patch)
           if [ ${#patches[@]} -eq 0 ]; then
-            echo "::error::patches/${FLAVOR}/ carries no patches; the flavor exists for them."
+            echo "::error::patches/${FLAVOR}/ carries no patches;"
+            echo "::error::the flavor exists for them."
             exit 1
           fi
           for patch in "${patches[@]}"; do
             echo "Applying $(basename "${patch}")"
             if ! git apply --verbose "${patch}"; then
-              echo "::error::Could not apply $(basename "${patch}"); the nightly changed the files it touches. Rebase the patch and refresh its context."
+              echo "::error::Could not apply $(basename "${patch}");"
+              echo "::error::the nightly changed the files it touches."
+              echo "::error::Rebase the patch and refresh its context."
               exit 1
             fi
           done
@@ -167,7 +175,8 @@ jobs:
       - name: Install Linux build libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libsecret-1-dev pkg-config imagemagick
+          sudo apt-get install -y build-essential libsecret-1-dev \
+            pkg-config imagemagick
 
       - name: Install dependencies
         run: |
@@ -191,7 +200,8 @@ jobs:
           )
           for test in "${tests[@]}"; do
             [[ -f "$test" ]] || {
-              echo "::error::${test} is missing: the ported Command Code patch did not apply."
+              echo "::error::${test} is missing: the ported Command"
+              echo "::error::Code patch did not apply."
               exit 1
             }
           done
@@ -202,7 +212,9 @@ jobs:
           "$vp_bin" test run "${tests[@]}"
 
       - name: Align package versions
-        run: node scripts/update-release-package-versions.ts "${{ needs.resolve.outputs.version }}"
+        run: |-
+          node scripts/update-release-package-versions.ts \
+            "${{ needs.resolve.outputs.version }}"
 
       - name: Build desktop pipeline
         run: vp run build:desktop
@@ -221,10 +233,13 @@ jobs:
         run: |
           set -euo pipefail
           appimage="$(find release -maxdepth 1 -name '*.AppImage' -print -quit)"
-          test -n "$appimage" || { echo "No AppImage was produced." >&2; exit 1; }
-          install -Dm0755 "$appimage" \
-            "$RUNNER_TEMP/T3-Code-${{ needs.resolve.outputs.version }}-x86_64.AppImage"
-          ls -l "$RUNNER_TEMP/T3-Code-${{ needs.resolve.outputs.version }}-x86_64.AppImage"
+          test -n "$appimage" || {
+            echo "No AppImage was produced." >&2
+            exit 1
+          }
+          base="T3-Code-${{ needs.resolve.outputs.version }}-x86_64"
+          install -Dm0755 "$appimage" "$RUNNER_TEMP/$base.AppImage"
+          ls -l "$RUNNER_TEMP/$base.AppImage"
 
       - name: Upload the AppImage
         uses: actions/upload-artifact@v4
@@ -245,7 +260,8 @@ jobs:
         shell: bash
     steps:
       - name: Install RPM, release, and COPR tooling
-        run: dnf --assumeyes install curl gh git jq rpm-build rpmdevtools copr-cli
+        run: >-
+          dnf --assumeyes install curl gh git jq rpm-build rpmdevtools copr-cli
       # The checkout is owned by the host user while run steps execute as a
       # different user inside the container, so `gh`'s internal git calls fail
       # without this.
@@ -269,10 +285,15 @@ jobs:
         run: |
           set -euo pipefail
           tag="v2-prs-nightly"
-          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --prerelease \
-              --title 'T3 Code v2 orchestrator nightly AppImages (with Command Code and Oh My Pi)' \
-              --notes 'Rolling prerelease holding the source-built AppImages that the t3code-v2-prs-nightly RPM repackages.'
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
+            >/dev/null 2>&1; then
+          title='T3 Code v2 orchestrator nightly AppImages'
+          title="$title (with Command Code and Oh My Pi)"
+          notes='Rolling prerelease holding the source-built AppImages'
+          notes="$notes that the t3code-v2-prs-nightly RPM repackages."
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
+              --prerelease \
+              --title "$title" --notes "$notes"
           fi
           gh release upload "$tag" --repo "$GITHUB_REPOSITORY" \
             "appimage/T3-Code-${VERSION}-x86_64.AppImage" --clobber
@@ -285,7 +306,8 @@ jobs:
           # No pull requests are layered, so no positional number/sha pairs are
           # passed to build-layered-srpm.sh; the provenance file records the
           # local patches instead.
-          ./scripts/build-layered-srpm.sh v2-prs "$TAG" appimage/T3-Code-*.AppImage
+          ./scripts/build-layered-srpm.sh v2-prs "$TAG" \
+            appimage/T3-Code-*.AppImage
 
       - name: Configure COPR credentials
         env:

@@ -15,11 +15,6 @@ case "$flavor" in
     commit_label='T3 Code nightly'
     already_message="Nightly ${key} is already recorded"
     ;;
-  v2)
-    record_path=packaging/v2/last-built-key
-    commit_label='T3 Code v2 nightly'
-    already_message="v2 nightly ${key} is already recorded"
-    ;;
   v2-prs)
     record_path=packaging/v2-prs/last-built-key
     commit_label='T3 Code v2-prs nightly'

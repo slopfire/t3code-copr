@@ -28,10 +28,6 @@ if [[ ! "$flavor" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
 fi
 
 case "$flavor" in
-  v2)
-    flavor_note="with the Pi provider"
-    flavor_detail=" The Pi coding agent driver and the generic ACP provider registry came with the orchestrator when upstream merged it, and this clean source build carries no local patches."
-    ;;
   v2-prs)
     flavor_note="with the Pi provider and the Command Code and Oh My Pi integrations"
     flavor_detail=" The local patches from the packaging repository add the Command Code provider and the bundled Oh My Pi ACP registry entry, written against the orchestration interfaces that upstream main has carried since it merged the orchestrator."

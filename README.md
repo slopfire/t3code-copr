@@ -4,45 +4,43 @@ RPM packages for the x86_64 T3 Code desktop nightly:
 
 - **`t3code-nightly`** repackages the official upstream AppImage. It does not
   build T3 Code from source.
-- **`t3code-v2-nightly`** compiles the same nightly from source and ships the
-  clean result. Since upstream merged the orchestrator rewrite
+- **`t3code-v2-prs-nightly`** compiles the same nightly from source with
+  `patches/v2-prs/` applied: **Command Code** as a full provider (driver,
+  `CommandCodeAdapterV2`, NDJSON protocol, model catalog, snapshot, text
+  generation, contracts schema, settings-UI definition) and **Oh My Pi** as a
+  bundled ACP Registry entry. Since upstream merged the orchestrator rewrite
   ([pingdotgg/t3code#2829](https://github.com/pingdotgg/t3code/pull/2829)) into
   main on 2026-10-02, main carries the v2 orchestrator, the **Pi** coding agent
   driver, and the generic ACP provider registry, so this is now a from-source
-  rebuild of the same revision the plain nightly repackages. It is kept as the
-  clean base the layered flavors build on.
-- **`t3code-v2-prs-nightly`** is that same source build with `patches/v2-prs/`
-  applied: **Command Code** as a full provider (driver, `CommandCodeAdapterV2`,
-  NDJSON protocol, model catalog, snapshot, text generation, contracts schema,
-  settings-UI definition) and **Oh My Pi** as a bundled ACP Registry entry. The
-  ported provider came from
-  [pingdotgg/t3code#10861](https://github.com/pingdotgg/t3code/pull/10861),
-  which upstream closed without merging; the v2-prs flavor now carries that
-  integration as a local patch instead.
+  build of the same revision the plain nightly repackages plus the local
+  patches. The retired clean v2 flavor (`t3code-v2-nightly`), which shipped
+  that same from-source build with no patches on top, is obsoleted by this
+  package so `dnf upgrade` moves its users over.
 
 The retired `t3code-prs-nightly` layered upstream pull requests #10861 and
 [#11973](https://github.com/pingdotgg/t3code/pull/11973) (the Oh My Pi driver)
 onto the official AppImage compile; upstream closed both without merging and
 moved main to the orchestrator interfaces, so that flavor and its conflict
-resolutions (`resolutions/`) were removed. The surviving layered packages
-obsolete it, so `dnf upgrade` moves its users onto a maintained name.
+resolutions (`resolutions/`) were removed. The surviving layered package
+obsoletes it, so `dnf upgrade` moves its users onto a maintained name.
 
 Upstream publishes no AppImage derived from this repository's patches, so the
-layered flavors are compiled from source in GitHub Actions and packaged the
+layered flavor is compiled from source in GitHub Actions and packaged the
 same way afterwards. Local patches from `patches/<flavor>/` are applied after
 the upstream tree is checked out; see [Local patches](#local-patches).
 
-All flavors build the upstream nightly tag (`scripts/resolve-latest-nightly.sh`
+Both packages build the upstream nightly tag (`scripts/resolve-latest-nightly.sh`
 picks the newest `-nightly.` prerelease; `-preview.` maintainer builds are
-ignored). A layered flavor rebuilds only when its inputs changed, so a nightly
-tag that a layered flavor has already packaged is skipped.
+ignored). The layered flavor rebuilds only when its inputs changed, so a nightly
+tag it has already packaged is skipped.
 
-Every layered flavor installs the same files as `t3code-nightly` and carries
-`Obsoletes: t3code-nightly` plus a higher release, so any of them replaces the
+The layered package installs the same files as `t3code-nightly` and carries
+`Obsoletes: t3code-nightly` plus a higher release, so it replaces the
 plain nightly instead of conflicting with it. They also obsolete the retired
-`t3code-cmd-nightly` and `t3code-prs-nightly` packages. The layered flavors do
-**not** obsolete each other: they are alternatives on the same paths, so
-switching between them is an explicit `dnf swap`.
+`t3code-cmd-nightly`, `t3code-prs-nightly`, and `t3code-v2-nightly` packages.
+The layered flavor does **not** obsolete the plain nightly: they are
+alternatives on the same paths, so switching between them is an explicit
+`dnf swap`.
 
 ## COPR setup
 
@@ -55,23 +53,19 @@ switching between them is an explicit `dnf swap`.
    - `COPR_PROJECT`: the COPR project identifier, for example
      `your-copr-user/t3code-nightly`.
 
-3. Enable Actions. Three workflows publish here, staggered so they do not build
+3. Enable Actions. Two workflows publish here, staggered so they do not build
    at the same minute:
 
    - `Publish T3 Code nightly to COPR` (:17) checks the official prereleases and
      submits the `t3code-nightly` source RPM only when it sees a new tag. It
      records the successful submission in `packaging/last-built-tag`.
-   - `Build T3 Code v2 orchestrator nightly` (:23) compiles the nightly tag from
-     source with no additions, archives the AppImage on the `v2-nightly`
-     prerelease, and submits the `t3code-v2-nightly` source RPM. It records the
-     combination in `packaging/v2/last-built-key`.
    - `Build T3 Code v2 orchestrator nightly with Command Code and Oh My Pi` (:33)
      builds the same tag with `patches/v2-prs/` applied and submits the
      `t3code-v2-prs-nightly` source RPM, recording `packaging/v2-prs/last-built-key`.
 
 Only the plain nightly exists for every upstream tag from the moment it is
-published; a layered flavor rebuilds only when its inputs changed, so a nightly
-tag that a layered flavor has already packaged is skipped.
+published; the layered flavor rebuilds only when its inputs changed, so a
+nightly tag it has already packaged is skipped.
 
 Use **Run workflow** with `force` when a COPR rebuild of the same inputs is
 needed. The normal CI workflow validates the RPM specs and checks the patches
@@ -110,13 +104,10 @@ sudo dnf install rpm-build rpmdevtools curl
 
 The source RPM is written to `rpmbuild/SRPMS/`.
 
-The layered flavors repackage AppImages that only CI builds, so they need one on
+The layered flavor repackages AppImages that only CI builds, so it needs one on
 disk:
 
 ```sh
-./scripts/build-layered-srpm.sh v2 v0.0.29-nightly.20260712.791 \
-  T3-Code-0.0.29-nightly.20260712.791-x86_64.AppImage
-
 ./scripts/build-layered-srpm.sh v2-prs v0.0.29-nightly.20260712.791 \
   T3-Code-0.0.29-nightly.20260712.791-x86_64.AppImage
 ```
@@ -131,19 +122,20 @@ The packages own the same files, so install them as a swap rather than alongside
 each other:
 
 ```sh
-sudo dnf swap t3code-nightly t3code-v2-nightly # clean source build
-sudo dnf swap t3code-v2-nightly t3code-v2-prs-nightly # source build + ported providers
+sudo dnf swap t3code-nightly t3code-v2-prs-nightly # source build + ported providers
 ```
 
-Each layered package also obsoletes `t3code-nightly`, the retired
-`t3code-cmd-nightly`, and the retired `t3code-prs-nightly`, so a plain
-`sudo dnf upgrade` reaches the same result as the first swap. Switching between
-layered flavors is always explicit, because none of them obsoletes another.
+The layered package also obsoletes `t3code-nightly`, the retired
+`t3code-cmd-nightly`, `t3code-prs-nightly`, and `t3code-v2-nightly`, so a plain
+`sudo dnf upgrade` reaches the same result as the swap, including for users of
+the retired clean v2 flavor. Switching back to the plain nightly is explicit,
+because the layered package does not obsolete it.
 
 ## Notes
 
 These are unofficial packages. T3 Code is distributed under the MIT license.
-`t3code-nightly` ships the upstream AppImage unchanged; the layered flavors ship
+`t3code-nightly` ships the upstream AppImage unchanged; the layered flavor ships
 an AppImage built from upstream sources plus the local patches named above.
-`t3code-v2-nightly` and `t3code-v2-prs-nightly` share one spec template and
-differ only in their packaging notes and their patch set.
+Since upstream's orchestrator merge made a clean from-source rebuild redundant,
+the former `t3code-v2-nightly` flavor was removed and its package name is
+obsoleted by `t3code-v2-prs-nightly`.
