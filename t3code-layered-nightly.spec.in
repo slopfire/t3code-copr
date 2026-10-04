@@ -34,11 +34,13 @@ ExclusiveArch:  x86_64
 Provides:       t3code = %{version}-%{release}
 Obsoletes:      t3code-nightly <= %{version}-%{release}
 Obsoletes:      t3code-cmd-nightly <= %{version}-%{release}
-Obsoletes:      t3code-prs-nightly <= %{version}-%{release}
-# The clean v2 flavor was retired once upstream merged the orchestrator: it
-# shipped a from-source rebuild of the same tag the plain nightly repackages,
-# so its users upgrade to this layered build, the only one with local content.
+# The `prs` flavor returned to its original name once the orchestrator merge
+# removed the `v2-` prefix's meaning: its predecessor is `t3code-v2-prs-nightly`
+# (this package does not obsoletes itself under the reused older name, which
+# upgrades in place). The clean v2 flavor was retired by the same merge, so its
+# users upgrade to this layered build, the only one with local content.
 Obsoletes:      t3code-v2-nightly <= %{version}-%{release}
+Obsoletes:      t3code-v2-prs-nightly <= %{version}-%{release}
 
 %description
 T3 Code is a minimal GUI for coding agents.
@@ -48,7 +50,8 @@ This unofficial package is built from the upstream sources of nightly
 %{_docdir}/%{name}/build-provenance.txt names every source input that went into
 the build. It is otherwise the same x86_64 nightly desktop build and provides
 the same `t3code` entry point. It also obsoletes the retired clean-from-source
-flavor `t3code-v2-nightly`, which upstream's orchestrator merge made redundant.
+flavor `t3code-v2-nightly` and this package's own `t3code-v2-prs-nightly`
+predecessor, which the orchestrator merge made redundant names.
 
 %prep
 %autosetup -c -T

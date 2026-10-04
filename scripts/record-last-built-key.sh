@@ -15,10 +15,10 @@ case "$flavor" in
     commit_label='T3 Code nightly'
     already_message="Nightly ${key} is already recorded"
     ;;
-  v2-prs)
-    record_path=packaging/v2-prs/last-built-key
-    commit_label='T3 Code v2-prs nightly'
-    already_message="v2-prs nightly ${key} is already recorded"
+  prs)
+    record_path=packaging/prs/last-built-key
+    commit_label='T3 Code prs nightly'
+    already_message="prs nightly ${key} is already recorded"
     ;;
   *)
     echo "unsupported flavor: $flavor" >&2

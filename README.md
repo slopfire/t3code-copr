@@ -4,25 +4,30 @@ RPM packages for the x86_64 T3 Code desktop nightly:
 
 - **`t3code-nightly`** repackages the official upstream AppImage. It does not
   build T3 Code from source.
-- **`t3code-v2-prs-nightly`** compiles the same nightly from source with
-  `patches/v2-prs/` applied: **Command Code** as a full provider (driver,
+- **`t3code-prs-nightly`** compiles the same nightly from source with
+  `patches/prs/` applied: **Command Code** as a full provider (driver,
   `CommandCodeAdapterV2`, NDJSON protocol, model catalog, snapshot, text
   generation, contracts schema, settings-UI definition) and **Oh My Pi** as a
   bundled ACP Registry entry. Since upstream merged the orchestrator rewrite
   ([pingdotgg/t3code#2829](https://github.com/pingdotgg/t3code/pull/2829)) into
   main on 2026-10-02, main carries the v2 orchestrator, the **Pi** coding agent
-  driver, and the generic ACP provider registry, so this is now a from-source
-  build of the same revision the plain nightly repackages plus the local
-  patches. The retired clean v2 flavor (`t3code-v2-nightly`), which shipped
-  that same from-source build with no patches on top, is obsoleted by this
-  package so `dnf upgrade` moves its users over.
+  driver, and the generic ACP provider registry, so this is a from-source build
+  of the same revision the plain nightly repackages plus those two integrations.
+  The `v2-` prefix was dropped once the orchestrator merge retired the clean
+  `t3code-v2-nightly` flavor and made the prefix meaningless; the two names it
+  replaces (`t3code-v2-prs-nightly` and `t3code-v2-nightly`) are obsoleted, so
+  `dnf upgrade` moves their users over.
 
-The retired `t3code-prs-nightly` layered upstream pull requests #10861 and
-[#11973](https://github.com/pingdotgg/t3code/pull/11973) (the Oh My Pi driver)
-onto the official AppImage compile; upstream closed both without merging and
-moved main to the orchestrator interfaces, so that flavor and its conflict
-resolutions (`resolutions/`) were removed. The surviving layered package
-obsoletes it, so `dnf upgrade` moves its users onto a maintained name.
+Neither integration is upstream yet, as of 2026-10-04: no open pull request
+carries Command Code or Oh My Pi, the provider PRs #10861 and
+[#11973](https://github.com/pingdotgg/t3code/pull/11973) were closed without
+merging, and the official ACP Registry has no Oh My Pi entry (registry PRs
+[#613](https://github.com/agentclientprotocol/registry/pull/613),
+[#572](https://github.com/agentclientprotocol/registry/pull/572), and
+[#502](https://github.com/agentclientprotocol/registry/pull/502) are still
+open). The flavor therefore carries them as local patches rather than layering
+pull requests, which its earlier incarnation did, and the name is kept from
+that incarnation.
 
 Upstream publishes no AppImage derived from this repository's patches, so the
 layered flavor is compiled from source in GitHub Actions and packaged the
@@ -36,8 +41,9 @@ tag it has already packaged is skipped.
 
 The layered package installs the same files as `t3code-nightly` and carries
 `Obsoletes: t3code-nightly` plus a higher release, so it replaces the
-plain nightly instead of conflicting with it. They also obsolete the retired
-`t3code-cmd-nightly`, `t3code-prs-nightly`, and `t3code-v2-nightly` packages.
+plain nightly instead of conflicting with it. It also obsoletes the retired
+`t3code-cmd-nightly` and `t3code-v2-nightly` names and its own
+`t3code-v2-prs-nightly` predecessor.
 The layered flavor does **not** obsolete the plain nightly: they are
 alternatives on the same paths, so switching between them is an explicit
 `dnf swap`.
@@ -59,9 +65,9 @@ alternatives on the same paths, so switching between them is an explicit
    - `Publish T3 Code nightly to COPR` (:17) checks the official prereleases and
      submits the `t3code-nightly` source RPM only when it sees a new tag. It
      records the successful submission in `packaging/last-built-tag`.
-   - `Build T3 Code v2 orchestrator nightly with Command Code and Oh My Pi` (:33)
-     builds the same tag with `patches/v2-prs/` applied and submits the
-     `t3code-v2-prs-nightly` source RPM, recording `packaging/v2-prs/last-built-key`.
+   - `Build T3 Code nightly with Command Code and Oh My Pi` (:33)
+     builds the same tag with `patches/prs/` applied and submits the
+     `t3code-prs-nightly` source RPM, recording `packaging/prs/last-built-key`.
 
 Only the plain nightly exists for every upstream tag from the moment it is
 published; the layered flavor rebuilds only when its inputs changed, so a
@@ -80,15 +86,17 @@ so editing a patch triggers a rebuild. Each patch must apply cleanly to the
 layered tree; if upstream changes the file it touches, the build fails instead
 of quietly shipping something else.
 
-The v2-prs flavor carries these as local patches, not pull requests, because
-upstream closed the pull request that carried the Command Code provider
-(#10861, "on current main") and the orchestrator merge removed the interfaces
-those integrations were first written against.
+The `prs` flavor carries these as local patches, not pull requests, because no
+upstream pull request carries them: the one that added the Command Code
+provider (#10861, "on current main") was closed without merging, the same
+happened to the Oh My Pi driver (#11973), and the Oh My Pi ACP Registry entry is
+still pending. The `prs` name is kept from the flavor that layered those pull
+requests before the orchestrator merge made that impossible.
 
 | Patch | Why |
 | --- | --- |
-| `patches/v2-prs/0001-acp-bundled-oh-my-pi-entry.patch` | Oh My Pi is ACP-native but its official ACP Registry entry is still pending, so the Registry flow cannot offer it. The patch ships the entry with the app (`bundledAcpAgents.ts`) and merges bundled entries behind fetched ones, so the official listing takes over automatically once it is published. |
-| `patches/v2-prs/0002-command-code-provider.patch` | The Command Code provider against the orchestration interfaces main carries since the #2829 merge: driver, `CommandCodeAdapterV2`, NDJSON protocol, model catalog, snapshot, text generation, contracts schema, and the settings-UI definition. Mid-turn sends are steered into the running turn by the v2 orchestrator (`supportsActiveSteering`), with the queueing implemented in the adapter because the CLI takes one prompt per process. |
+| `patches/prs/0001-acp-bundled-oh-my-pi-entry.patch` | Oh My Pi is ACP-native but its official ACP Registry entry is still pending, so the Registry flow cannot offer it. The patch ships the entry with the app (`bundledAcpAgents.ts`) and merges bundled entries behind fetched ones, so the official listing takes over automatically once it is published. |
+| `patches/prs/0002-command-code-provider.patch` | The Command Code provider against the orchestration interfaces main carries since the #2829 merge: driver, `CommandCodeAdapterV2`, NDJSON protocol, model catalog, snapshot, text generation, contracts schema, and the settings-UI definition. Mid-turn sends are steered into the running turn by the v2 orchestrator (`supportsActiveSteering`), with the queueing implemented in the adapter because the CLI takes one prompt per process. |
 
 A patch is not upstreamed here: once an equivalent change carries the fix,
 delete the patch file and its row.
@@ -108,7 +116,7 @@ The layered flavor repackages AppImages that only CI builds, so it needs one on
 disk:
 
 ```sh
-./scripts/build-layered-srpm.sh v2-prs v0.0.29-nightly.20260712.791 \
+./scripts/build-layered-srpm.sh prs v0.0.29-nightly.20260712.791 \
   T3-Code-0.0.29-nightly.20260712.791-x86_64.AppImage
 ```
 
@@ -122,20 +130,22 @@ The packages own the same files, so install them as a swap rather than alongside
 each other:
 
 ```sh
-sudo dnf swap t3code-nightly t3code-v2-prs-nightly # source build + ported providers
+sudo dnf swap t3code-nightly t3code-prs-nightly # source build + ported providers
 ```
 
 The layered package also obsoletes `t3code-nightly`, the retired
-`t3code-cmd-nightly`, `t3code-prs-nightly`, and `t3code-v2-nightly`, so a plain
-`sudo dnf upgrade` reaches the same result as the swap, including for users of
-the retired clean v2 flavor. Switching back to the plain nightly is explicit,
-because the layered package does not obsolete it.
+`t3code-cmd-nightly` and `t3code-v2-nightly`, and its own
+`t3code-v2-prs-nightly` predecessor, so a plain `sudo dnf upgrade` reaches the
+same result as the swap, including for users of the retired v2 names. Switching
+back to the plain nightly is explicit, because the layered package does not
+obsolete it.
 
 ## Notes
 
 These are unofficial packages. T3 Code is distributed under the MIT license.
 `t3code-nightly` ships the upstream AppImage unchanged; the layered flavor ships
 an AppImage built from upstream sources plus the local patches named above.
-Since upstream's orchestrator merge made a clean from-source rebuild redundant,
-the former `t3code-v2-nightly` flavor was removed and its package name is
-obsoleted by `t3code-v2-prs-nightly`.
+Since upstream's orchestrator merge made the `v2-` prefix meaningless and a
+clean from-source rebuild redundant, the former `t3code-v2-nightly` and
+`t3code-v2-prs-nightly` flavors became `t3code-prs-nightly`, which obsoletes
+both retired names.

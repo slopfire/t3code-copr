@@ -21,15 +21,15 @@ shift 3
 pr_numbers=("$@")
 
 # Hyphens are allowed inside a flavor name: the package is
-# t3code-<flavor>-nightly, so `v2-prs` becomes t3code-v2-prs-nightly.
+# t3code-<flavor>-nightly, so `prs` becomes t3code-prs-nightly.
 if [[ ! "$flavor" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
   echo "unsupported flavor: $flavor" >&2
   exit 64
 fi
 
 case "$flavor" in
-  v2-prs)
-    flavor_note="with the Pi provider and the Command Code and Oh My Pi integrations"
+  prs)
+    flavor_note="with the Command Code and Oh My Pi integrations"
     flavor_detail=" The local patches from the packaging repository add the Command Code provider and the bundled Oh My Pi ACP registry entry, written against the orchestration interfaces that upstream main has carried since it merged the orchestrator."
     ;;
   *)

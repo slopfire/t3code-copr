@@ -3,9 +3,9 @@
 #
 #   build-layered-srpm.sh FLAVOR TAG APPIMAGE [PR_NUMBER PR_SHA ...]
 #
-# FLAVOR selects the spec template (t3code-<flavor>-nightly.spec.in) and the
-# desktop entry (packaging/t3code-<flavor>.desktop). The pull-request pairs are
-# optional: a flavor that layers none just omits them.
+# FLAVOR names the package (t3code-<flavor>-nightly) and selects the desktop
+# entry (packaging/t3code-<flavor>.desktop); the spec template is shared. The
+# pull-request pairs are optional: a flavor that layers none just omits them.
 set -euo pipefail
 
 if [[ $# -lt 3 || $(( ($# - 3) % 2 )) -ne 0 ]]; then

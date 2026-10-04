@@ -23,11 +23,11 @@ jobs:
         run: dnf --assumeyes install rpm-build rpmdevtools
       - name: Render and validate the RPM specs
         run: |
-          ./scripts/render-spec.sh v0.0.46-nightly.20261003.2623 /tmp/t3code-nightly.spec
+          ./scripts/render-spec.sh v0.0.46-nightly.20261004.2644 /tmp/t3code-nightly.spec
           rpmspec --parse /tmp/t3code-nightly.spec >/dev/null
-          ./scripts/render-layered-spec.sh v2-prs \
-            v0.0.46-nightly.20261003.2623 /tmp/t3code-v2-prs-nightly.spec
-          rpmspec --parse /tmp/t3code-v2-prs-nightly.spec >/dev/null
+          ./scripts/render-layered-spec.sh prs \
+            v0.0.46-nightly.20261004.2644 /tmp/t3code-prs-nightly.spec
+          rpmspec --parse /tmp/t3code-prs-nightly.spec >/dev/null
       - name: Check shell scripts
         run: bash -n scripts/*.sh packaging/t3code
       - name: Check the patch set applies to the latest nightly
