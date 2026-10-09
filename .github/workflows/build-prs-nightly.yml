@@ -120,11 +120,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/layers"
+          # Assemble the URL as one shell word. Wrapping it across lines inside
+          # the double quotes keeps the continuation line's indentation, and
+          # curl rejects the resulting whitespace as a malformed URL.
+          tarball_url="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          tarball_url="${tarball_url}/tarball/${{ github.sha }}"
           curl --fail --silent --show-error --location \
             --header "Authorization: Bearer ${GH_TOKEN}" \
             --header 'Accept: application/vnd.github+json' \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/tarball/\
-            ${{ github.sha }}" \
+            "${tarball_url}" \
             | tar --extract --gzip --strip-components=1 \
             --directory "$RUNNER_TEMP/layers"
           ls -R "$RUNNER_TEMP/layers/patches" 2>/dev/null || true
